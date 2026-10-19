@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
+import { appendAudit, resolveAuditPath, resolveDshHome } from '../lib/audit.js';
 import {
   DEFAULT_CONFIG,
   formatDuration,
@@ -11,19 +15,26 @@ import {
   statusEmoji,
   statusLabel,
 } from '../lib/config.js';
-import { createState, decideNotification, forgetSession, rememberTurnStart } from '../lib/decide.js';
+import {
+  createState,
+  decideNotification,
+  forgetSession,
+  normalizeReason,
+  rememberAssistantText,
+  rememberTurnStart,
+  takeReply,
+} from '../lib/decide.js';
 import { buildNotificationCommand, resolveChannel, resolveSound } from '../lib/notify.js';
 import { createRuntime } from '../lib/runtime.js';
-import { extractReplyPreview, isUserSession, workspaceName } from '../lib/session.js';
+import { assistantTextFromEvent, isUserSession, resolveWorkingDirectory, workspaceName } from '../lib/session.js';
 import { apply } from '../index.js';
 
 const SESSION_ID = 'sess_0123456789abcdef';
 
-function makeSession({ id = SESSION_ID, header = {}, events = [] } = {}) {
+function makeSession({ id = SESSION_ID, header = {} } = {}) {
   return {
     id,
     header: { cwd: '/Users/example/projects/demo-app', ...header },
-    snapshotEvents: () => events,
   };
 }
 
@@ -80,7 +91,7 @@ test('normalizeConfig validates and clamps hostile values', () => {
   });
   assert.equal(config.enabled, true);
   assert.equal(config.channel, 'auto');
-  assert.equal(config.sound, 'Glass');
+  assert.equal(config.sound, '');
   assert.deepEqual(config.notifyOn, ['completed', 'error', 'max-tokens']);
   assert.equal(config.includeSubagents, false);
   assert.equal(config.minDurationMs, 0);
@@ -91,27 +102,20 @@ test('normalizeConfig validates and clamps hostile values', () => {
   assert.equal(config.debug, false);
 });
 
-test('normalizeConfig supports empty notifyOn and all', () => {
+test('normalizeConfig supports empty notifyOn, all, and explicit empty sound', () => {
   assert.deepEqual(normalizeConfig({ notifyOn: [] }).notifyOn, []);
   const all = normalizeConfig({ notifyOn: 'all' }).notifyOn;
   assert.equal(all.length, 7);
   assert.ok(all.includes('forked'));
+  assert.equal(normalizeConfig({ sound: '' }).sound, '');
+  assert.equal(normalizeConfig({ sound: false }).sound, '');
 });
 
 test('resolveLocale follows config, then system/env, then Intl', () => {
   assert.equal(resolveLocale(normalizeConfig({ locale: 'zh' })), 'zh');
-  assert.equal(
-    resolveLocale(normalizeConfig({}), {}, () => 'zh_CN'),
-    'zh',
-  );
-  assert.equal(
-    resolveLocale(normalizeConfig({}), { LANG: 'zh_CN.UTF-8' }, () => 'en_US'),
-    'en',
-  );
-  assert.equal(
-    resolveLocale(normalizeConfig({}), { DSH_NOTIFY_LOCALE: 'zh-CN' }, () => 'en_US'),
-    'zh',
-  );
+  assert.equal(resolveLocale(normalizeConfig({}), {}, () => 'zh_CN'), 'zh');
+  assert.equal(resolveLocale(normalizeConfig({}), { LANG: 'zh_CN.UTF-8' }, () => 'en_US'), 'en');
+  assert.equal(resolveLocale(normalizeConfig({}), { DSH_NOTIFY_LOCALE: 'zh-CN' }, () => 'en_US'), 'zh');
 });
 
 test('status labels and emoji cover every reason', () => {
@@ -135,18 +139,20 @@ test('formatDuration renders minute/second/hour forms', () => {
   assert.equal(formatDuration(undefined, 'en'), '');
 });
 
-test('renderTemplate substitutes known tokens and keeps unknown ones visible', () => {
-  const rendered = renderTemplate('{emoji} {session} · {status} {unknown}', {
+test('renderTemplate substitutes known tokens, keeps unknown ones, ignores inherited props', () => {
+  const rendered = renderTemplate('{emoji} {session} · {status} {unknown} {constructor}', {
     emoji: '✅',
     session: 'demo',
     status: 'completed',
   });
-  assert.equal(rendered, '✅ demo · completed {unknown}');
+  assert.equal(rendered, '✅ demo · completed {unknown} {constructor}');
 });
 
 test('sanitizeText strips control characters and clamps length', () => {
   const cleaned = sanitizeText('a\u0000b\r\nc\n\n\n\nd\t\t e', 100);
   assert.equal(cleaned, 'a b\nc\n\nd e');
+  const bidi = sanitizeText('safe\u202eevil\u200btext', 100);
+  assert.equal(bidi, 'safe evil text');
   const clipped = sanitizeText('x'.repeat(50), 10);
   assert.equal(clipped.length, 10);
   assert.ok(clipped.endsWith('…'));
@@ -161,15 +167,44 @@ test('isUserSession distinguishes root and delegated sessions', () => {
   assert.equal(workspaceName('/'), '');
 });
 
-test('extractReplyPreview returns the last assistant text of the turn', () => {
-  const events = [
-    turnStart({ time: 1_000 }),
-    assistantMessage({ text: 'first answer' }),
-    assistantMessage({ text: 'second answer' }),
-  ];
-  assert.equal(extractReplyPreview(makeSession({ events }), 1), 'second answer');
-  const preview = extractReplyPreview(makeSession({ events }), 1, 5);
-  assert.equal(preview, 'seco…');
+test('assistantTextFromEvent extracts text blocks only', () => {
+  assert.equal(assistantTextFromEvent(assistantMessage({ text: 'hello world' })), 'hello world');
+  assert.equal(
+    assistantTextFromEvent({
+      type: 'assistant/message',
+      data: {
+        message: {
+          content: [
+            { type: 'reasoning', text: 'thinking' },
+            { type: 'text', text: 'visible' },
+            { type: 'tool-call', name: 'x' },
+          ],
+        },
+      },
+    }),
+    'visible',
+  );
+  assert.equal(assistantTextFromEvent(turnEnd()), '');
+  assert.equal(assistantTextFromEvent(assistantMessage({ text: 'abcdefgh' }), 5), 'abcd…');
+});
+
+test('rememberAssistantText and takeReply scope previews to their turn', () => {
+  const state = createState();
+  const session = makeSession();
+  rememberAssistantText(state, session, assistantMessage({ turn: 3, text: 'turn three answer' }));
+  assert.equal(takeReply(state, session, 3), 'turn three answer');
+  assert.equal(takeReply(state, session, 3), '');
+
+  rememberAssistantText(state, session, assistantMessage({ turn: 4, text: 'turn four answer' }));
+  assert.equal(takeReply(state, session, 3), '');
+  assert.equal(takeReply(state, session, 4), 'turn four answer');
+});
+
+test('resolveWorkingDirectory prefers the service over the header', () => {
+  const session = makeSession();
+  const ctx = { get: (name) => (name === 'workingDirectory' ? { get: () => '/tmp/effective' } : undefined) };
+  assert.equal(resolveWorkingDirectory(ctx, session), '/tmp/effective');
+  assert.equal(resolveWorkingDirectory({ get: () => undefined }, session), '/Users/example/projects/demo-app');
 });
 
 test('decideNotification notifies for a completed root turn with duration', () => {
@@ -182,7 +217,6 @@ test('decideNotification notifies for a completed root turn with duration', () =
     config: baseConfig(),
     state,
     locale: 'en',
-    now: 1_000_000,
   });
   assert.ok(decision && decision.notify);
   assert.equal(decision.title, 'DeepSeek Harness');
@@ -191,14 +225,24 @@ test('decideNotification notifies for a completed root turn with duration', () =
   assert.equal(decision.reason, 'completed');
 });
 
+test('decideNotification omits duration when the turn start was never observed', () => {
+  const decision = decideNotification({
+    session: makeSession(),
+    event: turnEnd({ time: 1_000_000 }),
+    config: baseConfig({ bodyTemplate: '{emoji} {session} {duration}' }),
+    state: createState(),
+    locale: 'en',
+  });
+  assert.ok(decision && decision.notify);
+  assert.equal(decision.meta.durationMs, undefined);
+  assert.equal(decision.body.trim(), '✅ demo-app');
+});
+
 test('decideNotification filters delegated sessions by default', () => {
   const state = createState();
   const child = makeSession({ header: { origin: 'subagent', cwd: '/tmp/child' } });
   const event = turnEnd();
-  assert.equal(
-    decideNotification({ session: child, event, config: baseConfig(), state, locale: 'en' }),
-    null,
-  );
+  assert.equal(decideNotification({ session: child, event, config: baseConfig(), state, locale: 'en' }), null);
 
   const included = decideNotification({
     session: child,
@@ -213,24 +257,17 @@ test('decideNotification filters delegated sessions by default', () => {
 test('decideNotification applies the notifyOn filter', () => {
   const state = createState();
   const session = makeSession();
-  const error = { message: 'provider overloaded' };
   assert.ok(
     decideNotification({
       session,
-      event: turnEnd({ kind: 'error', extra: { error } }),
+      event: turnEnd({ kind: 'error', extra: { error: { message: 'provider overloaded' } } }),
       config: baseConfig(),
       state,
       locale: 'en',
     }),
   );
   assert.equal(
-    decideNotification({
-      session,
-      event: turnEnd({ kind: 'aborted' }),
-      config: baseConfig(),
-      state,
-      locale: 'en',
-    }),
+    decideNotification({ session, event: turnEnd({ kind: 'aborted' }), config: baseConfig(), state, locale: 'en' }),
     null,
   );
   assert.ok(
@@ -244,25 +281,44 @@ test('decideNotification applies the notifyOn filter', () => {
   );
 });
 
-test('decideNotification renders templates, reply preview and error detail', () => {
-  const state = createState();
-  const session = makeSession({
-    events: [turnStart({ time: 995_000 }), assistantMessage({ text: 'All checks pass.' })],
-  });
+test('decideNotification renders templates with reply, error detail and cwd override', () => {
   const decision = decideNotification({
-    session,
-    event: turnEnd({ kind: 'error', time: 1_000_000, extra: { error: { message: 'rate limited' } } }),
+    session: makeSession(),
+    event: turnEnd({
+      kind: 'error',
+      time: 1_000_000,
+      extra: { error: { message: 'rate limited' } },
+    }),
     config: baseConfig({
       titleTemplate: '{emoji} {session}',
-      bodyTemplate: '{status}: {error} — {reply} ({duration})',
+      bodyTemplate: '{status}: {error} — {reply} ({duration}) @{workspace}',
     }),
-    state,
+    state: (() => {
+      const state = createState();
+      rememberTurnStart(state, makeSession(), turnStart({ time: 995_000 }));
+      return state;
+    })(),
     locale: 'en',
-    now: 1_000_000,
+    cwd: '/tmp/elsewhere',
+    reply: 'All checks pass.',
   });
   assert.ok(decision && decision.notify);
   assert.equal(decision.title, '❌ demo-app');
-  assert.equal(decision.body, 'failed: rate limited — All checks pass. (5s)');
+  assert.equal(decision.body, 'failed: rate limited — All checks pass. (5s) @elsewhere');
+  assert.equal(decision.meta.cwd, '/tmp/elsewhere');
+});
+
+test('decideNotification renders {reply} in the title too', () => {
+  const decision = decideNotification({
+    session: makeSession(),
+    event: turnEnd(),
+    config: baseConfig({ titleTemplate: '{session} — {reply}' }),
+    state: createState(),
+    locale: 'en',
+    reply: 'done',
+  });
+  assert.ok(decision && decision.notify);
+  assert.equal(decision.title, 'demo-app — done');
 });
 
 test('decideNotification honors minDurationMs', () => {
@@ -279,36 +335,41 @@ test('decideNotification honors minDurationMs', () => {
   assert.equal(decision, null);
 });
 
-test('decideNotification applies a sliding-window rate limit', () => {
-  const state = createState();
-  const config = baseConfig({ maxPerMinute: 1 });
-  const first = decideNotification({
-    session: makeSession(),
-    event: turnEnd(),
-    config,
-    state,
-    locale: 'en',
-    now: 1_000_000,
-  });
-  const second = decideNotification({
-    session: makeSession({ id: 'sess_other' }),
-    event: turnEnd(),
-    config,
-    state,
-    locale: 'en',
-    now: 1_000_001,
-  });
-  assert.ok(first && first.notify);
-  assert.deepEqual(second, { suppressed: 'rate-limit' });
+test('decideNotification ignores malformed or unknown reasons', () => {
+  const malformed = { type: 'turn/end', time: 1_000_000, data: { turn: 1 } };
+  assert.deepEqual(normalizeReason(malformed), { kind: '', reason: undefined });
+  assert.equal(
+    decideNotification({
+      session: makeSession(),
+      event: malformed,
+      config: baseConfig(),
+      state: createState(),
+      locale: 'en',
+    }),
+    null,
+  );
+  assert.equal(
+    decideNotification({
+      session: makeSession(),
+      event: turnEnd({ kind: 'some-future-reason' }),
+      config: baseConfig({ notifyOn: 'all' }),
+      state: createState(),
+      locale: 'en',
+    }),
+    null,
+  );
 });
 
-test('forgetSession releases turn bookkeeping', () => {
+test('forgetSession releases turn and reply bookkeeping', () => {
   const state = createState();
   const session = makeSession();
   rememberTurnStart(state, session, turnStart());
+  rememberAssistantText(state, session, assistantMessage());
   assert.equal(state.turnStarts.size, 1);
+  assert.equal(state.lastReplies.size, 1);
   forgetSession(state, session);
   assert.equal(state.turnStarts.size, 0);
+  assert.equal(state.lastReplies.size, 0);
 });
 
 test('resolveChannel respects platform and explicit channel', () => {
@@ -329,7 +390,7 @@ test('resolveSound validates against system sounds', () => {
 
 test('buildNotificationCommand passes content as argv, never through a shell', () => {
   const title = 'A "quoted" title & $(whoami)';
-  const body = 'line1 `id` \\ backslash';
+  const body = '-notify-option line1 `id` \\ backslash';
   const command = buildNotificationCommand('osascript', { title, body, sound: 'Glass' });
   assert.equal(command.command, '/usr/bin/osascript');
   assert.equal(command.args[0], '-e');
@@ -341,6 +402,7 @@ test('buildNotificationCommand passes content as argv, never through a shell', (
 
   const linux = buildNotificationCommand('notify-send', { title, body });
   assert.equal(linux.command, 'notify-send');
+  assert.equal(linux.args.at(-3), '--');
   assert.equal(linux.args.at(-2), title);
   assert.equal(linux.args.at(-1), body);
   assert.equal(buildNotificationCommand('none', { title, body }), null);
@@ -356,11 +418,15 @@ test('runtime wires turn/end to a sent notification and audit record', async () 
       debug: (message) => logs.push(['debug', message]),
       warn: (message) => logs.push(['warn', message]),
     },
-    get: () => ({ get: () => ({ title: 'Notification work' }) }),
+    get: (name) => {
+      if (name === 'sessionTitle') return { get: () => ({ title: 'Notification work' }) };
+      if (name === 'workingDirectory') return { get: () => '/tmp/effective-cwd' };
+      return undefined;
+    },
   };
   const runtime = createRuntime({
     ctx,
-    config: baseConfig({ sound: '' }),
+    config: baseConfig({ sound: '', bodyTemplate: '{emoji} {session} · {status}\n{reply}' }),
     env: {},
     now: () => 1_000_000,
     send: async (spec) => {
@@ -370,23 +436,23 @@ test('runtime wires turn/end to a sent notification and audit record', async () 
     audit: (config, record) => audits.push(record),
   });
 
-  assert.equal(runtime.channel, process.platform === 'darwin' ? 'osascript' : resolveChannel(baseConfig()));
   const session = makeSession();
   runtime.onSessionEvent(session, turnStart({ time: 992_000 }));
+  runtime.onSessionEvent(session, assistantMessage({ text: 'All tests pass.' }));
   runtime.onSessionEvent(session, turnEnd({ time: 1_000_000 }));
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.equal(sent.length, 1);
   assert.equal(sent[0].args.at(-3), 'DeepSeek Harness');
-  assert.equal(sent[0].args.at(-2), '✅ Notification work · completed');
-  assert.equal(sent[0].args.at(-1), '');
+  assert.equal(sent[0].args.at(-2), '✅ Notification work · completed\nAll tests pass.');
   assert.equal(audits.length, 1);
   assert.equal(audits[0].status, 'sent');
   assert.equal(audits[0].durationMs, 8_000);
   assert.equal(audits[0].sessionTitle, 'Notification work');
+  assert.equal(audits[0].cwd, '/tmp/effective-cwd');
 });
 
-test('runtime audits suppressed rate limits without sending', async () => {
+test('runtime audits suppressed rate limits without consuming a notification', async () => {
   const sent = [];
   const audits = [];
   const runtime = createRuntime({
@@ -403,13 +469,64 @@ test('runtime audits suppressed rate limits without sending', async () => {
   runtime.onSessionEvent(makeSession(), turnEnd());
   runtime.onSessionEvent(makeSession({ id: 'sess_second' }), turnEnd());
   await new Promise((resolve) => setTimeout(resolve, 0));
+
   assert.equal(sent.length, 1);
   assert.equal(audits.length, 2);
   const suppressed = audits.filter((record) => record.status === 'suppressed');
   const delivered = audits.filter((record) => record.status === 'sent');
   assert.equal(suppressed.length, 1);
-  assert.equal(suppressed[0].suppressed, 'rate-limit');
   assert.equal(delivered.length, 1);
+  assert.equal(suppressed[0].suppressed, 'rate-limit');
+  assert.equal(suppressed[0].sessionId, 'sess_second');
+  assert.equal(suppressed[0].sessionTitle, 'demo-app');
+  assert.equal(suppressed[0].turn, 1);
+});
+
+test('runtime reports channel none without sending or consuming quota', async () => {
+  const sent = [];
+  const audits = [];
+  const runtime = createRuntime({
+    ctx: { logger: {} },
+    config: baseConfig({ channel: 'none', maxPerMinute: 1 }),
+    env: {},
+    now: () => 1_000_000,
+    send: async (spec) => {
+      sent.push(spec);
+      return { ok: true };
+    },
+    audit: (config, record) => audits.push(record),
+  });
+  runtime.onSessionEvent(makeSession(), turnEnd());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(sent.length, 0);
+  assert.equal(audits.length, 1);
+  assert.equal(audits[0].status, 'failed');
+  assert.match(audits[0].error, /no supported notification channel/);
+  assert.equal(audits[0].sessionId, SESSION_ID);
+});
+
+test('appendAudit writes a private, parseable JSONL record', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'dsh-notify-test-'));
+  try {
+    const path = join(directory, 'audit.jsonl');
+    const config = normalizeConfig({ auditPath: path });
+    assert.equal(resolveAuditPath(config), path);
+    await appendAudit(config, { status: 'sent', title: 'hello', body: 'world' }, {});
+    const lines = readFileSync(path, 'utf8').trim().split('\n');
+    assert.equal(lines.length, 1);
+    assert.deepEqual(JSON.parse(lines[0]), { status: 'sent', title: 'hello', body: 'world' });
+    assert.equal(statSync(path).mode & 0o777, 0o600);
+
+    await appendAudit(config, { status: 'failed' }, {});
+    assert.equal(readFileSync(path, 'utf8').trim().split('\n').length, 2);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('resolveDshHome honors DSH_HOME from the environment', () => {
+  assert.equal(resolveDshHome({ DSH_HOME: '/tmp/custom-dsh' }), '/tmp/custom-dsh');
+  assert.equal(resolveDshHome({}), join(process.env.HOME ?? '', '.dsh'));
 });
 
 test('apply registers Host listeners and honors enabled: false', () => {

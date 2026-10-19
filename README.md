@@ -9,8 +9,8 @@ DeepSeek Harness has no built-in "your task is done" signal. `dsh-notify` is a s
 ## Features
 
 - **Turn-end notifications** from the durable `session/event` feed (`turn/end`), not a poller.
-- **Outcome-aware messages** for `completed`, `error`, `aborted`, `interrupted`, `max-tokens`, `blocked` and `forked`.
-- **Duration, session title and reply preview** available as template placeholders.
+- **Outcome-aware messages** for `completed`, `error`, `aborted`, `interrupted`, `max-tokens` and `blocked`.
+- **Duration, session title and reply preview** available as template placeholders, built from live events (a turn that began before the plugin activated has no duration or reply preview).
 - **Root sessions only by default**; subagent, teammate and workflow member sessions are skipped unless `includeSubagents` is enabled.
 - **macOS Notification Center** via `osascript` and **Linux** via `notify-send`.
 - **No shell**: titles and bodies are passed as `argv`, so quotes, backticks and `$(...)` stay literal.
@@ -54,7 +54,7 @@ Windows currently has no dependency-free notification channel; `channel: auto` r
 
 ## Configuration
 
-The bundle patch inserts the row; customize it by editing the row's `config` (in a profile patch targeting `id: dsh-notify`, or by uncommenting keys in this package's `cordis.patch.yml`). Missing keys always fall back to the defaults below, so a partial override is safe.
+The bundle patch inserts the row; customize it by replacing the empty `config: {}` in this package's `cordis.patch.yml` (or in a profile patch targeting `id: dsh-notify`). Missing keys always fall back to the defaults below, so a partial override is safe.
 
 ```yaml
 - id: dsh-notify
@@ -70,8 +70,7 @@ The bundle patch inserts the row; customize it by editing the row's `config` (in
 | `enabled` | boolean | `true` | Turn the plugin's listener off without uninstalling it. |
 | `channel` | string | `"auto"` | `auto`, `osascript` (macOS), `notify-send` (Linux) or `none`. |
 | `sound` | string | `"Glass"` | macOS system sound name from `/System/Library/Sounds` (without `.aiff`). `""` disables sound. |
-| `notifyOn` | string[] | `["completed", "error"]` | Turn-end reasons that notify. Use `all` for every reason, `[]` for none. |
-| `includeSubagents` | boolean | `false` | Also notify for subagent, teammate and workflow-member turns. |
+| `notifyOn` | string[] | `["completed", "error"]` | Turn-end reasons that notify. Use `all` for every reason, `[]` for none. || `includeSubagents` | boolean | `false` | Also notify for subagent, teammate and workflow-member turns. |
 | `minDurationMs` | number | `0` | Skip turns shorter than this. `0` notifies every turn. |
 | `maxPerMinute` | number | `12` | Sliding-window rate limit across all sessions. `0` disables it. |
 | `locale` | string | `"auto"` | `auto`, `en` or `zh`. `auto` follows `DSH_NOTIFY_LOCALE`, the macOS system locale, `LC_ALL`/`LANG`, then `Intl`. |
@@ -89,27 +88,27 @@ The bundle patch inserts the row; customize it by editing the row's `config` (in
 | Placeholder | Value |
 | --- | --- |
 | `{session}` / `{title}` | Session title (log-backed title, else working-directory folder). |
-| `{workspace}` | Folder name of the session working directory. |
-| `{cwd}` | Full session working directory. |
+| `{workspace}` | Folder name of the effective session working directory. |
+| `{cwd}` | Full effective session working directory (tracks in-session directory changes). |
 | `{status}` | Localized outcome label, e.g. `completed` / `任务完成`. |
-| `{emoji}` | Outcome emoji (✅ ❌ ⏹️ ⚠️ 🔶 ⛔ 🌿). |
-| `{duration}` | Turn duration, e.g. `12s`, `3m 5s`, `1h 2m 5s`. |
+| `{emoji}` | Outcome emoji (✅ ❌ ⏹️ ⚠️ 🔶 ⛔). |
+| `{duration}` | Turn duration, e.g. `12s`, `3m 5s`, `1h 2m 5s`; empty when the turn began before the plugin was active. |
 | `{turn}` | Turn number. |
 | `{sessionId}` | Full session id. |
-| `{reply}` | Preview of the last assistant text in the turn (computed on demand). |
+| `{reply}` | Preview of the last assistant text observed in the live feed for this turn; empty when unavailable. |
 | `{error}` | Error message for `error` turns. |
 
 Unknown placeholders stay verbatim so a typo is visible instead of silently disappearing. Text is sanitized and clamped to 120 characters for the title and 400 for the body.
 
 ## How it works
 
-1. The plugin subscribes to `session/event` and tracks each session's `turn/start` time.
-2. On `turn/end` it checks the outcome against `notifyOn`, skips delegated sessions unless configured otherwise, and honors `minDurationMs` and `maxPerMinute`.
-3. It resolves the session title through the optional `sessionTitle` service, falling back to the working-directory folder.
-4. It renders the templates and spawns the platform notification command with `argv` (never a shell).
-5. It appends one JSON line to the audit log, then returns immediately; the Host turn is never blocked by notification delivery.
+1. The plugin subscribes to `session/event` and records each session's live `turn/start` time and last `assistant/message` text. It never rescans a session log.
+2. On `turn/end` it checks the outcome against `notifyOn`, skips delegated sessions unless configured otherwise, and honors `minDurationMs`.
+3. It resolves the session title through the optional `sessionTitle` service and the effective directory through the optional `workingDirectory` service, falling back to the session header.
+4. It renders the templates and spawns the platform notification command with `argv` (never a shell), applying the sliding-window rate limit at the point of a real delivery attempt.
+5. It queues one JSON line for the audit log asynchronously; the Host turn never waits for notification delivery or disk I/O.
 
-Nothing is appended to the session log; the plugin only reads it.
+Nothing is appended to the session log; the plugin only observes live events.
 
 ## Platform notes
 
@@ -133,7 +132,7 @@ No dependency-free toast channel ships in v1. `channel: auto` resolves to `none`
 
 ## Audit log
 
-When `audit` is enabled (default), each attempt appends one JSON line to `$DSH_HOME/dsh-notify/audit.jsonl` (`~/.dsh/dsh-notify/audit.jsonl` unless `DSH_HOME` is set). Records contain the rendered title/body, channel, reason, session id/title, working directory, turn, duration and delivery result. The file is created with `0600` and rotates to `audit.jsonl.1` at 512 KiB.
+When `audit` is enabled (default), each attempt is appended asynchronously as one JSON line to `$DSH_HOME/dsh-notify/audit.jsonl` (`~/.dsh/dsh-notify/audit.jsonl` unless `DSH_HOME` is set). Records contain the rendered title/body, channel, reason, session id/title, working directory, turn, duration and delivery result. The file is created with `0600` and rotates to `audit.jsonl.1` at 512 KiB. Writes are serialized and best-effort: a line can be lost if the Host exits immediately after a notification.
 
 Notification text can contain session titles or assistant reply snippets; the log stays local. Set `audit: false` or point `auditPath` elsewhere if you prefer.
 
@@ -151,7 +150,7 @@ Notification text can contain session titles or assistant reply snippets; the lo
 ## Development
 
 ```sh
-node --test test/          # unit + integration tests (24 cases)
+node --test test/          # unit + integration tests (31 cases)
 node test/smoke-notify.mjs # real notification through the same code path
 ```
 

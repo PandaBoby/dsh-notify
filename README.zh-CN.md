@@ -9,8 +9,8 @@ DeepSeek Harness 本身没有“任务已完成”的提示。`dsh-notify` 是�
 ## 功能
 
 - **轮次结束通知**：订阅持久化的 `session/event` 事件流（`turn/end`），不做轮询。
-- **区分任务结果**：`completed`、`error`、`aborted`、`interrupted`、`max-tokens`、`blocked`、`forked`。
-- **丰富的消息变量**：会话标题、耗时、回复摘要等均可写入模板。
+- **区分任务结果**：`completed`、`error`、`aborted`、`interrupted`、`max-tokens`、`blocked`。
+- **丰富的消息变量**：会话标题、耗时、回复摘要等均可写入模板（基于实时事件；插件激活前已开始的轮次没有耗时/回复摘要）。
 - **默认只通知根会话**：子智能体、Agent Teams 成员和工作流成员默认不打扰；可用 `includeSubagents` 打开。
 - **macOS 通知中心**（`osascript`）与 **Linux**（`notify-send`）。
 - **不经过 shell**：标题与正文以 `argv` 传入，引号、反引号、`$(...)` 都只会作为普通文本。
@@ -54,7 +54,7 @@ Windows 目前没有零依赖的通知通道：`channel: auto` 会解析为 `non
 
 ## 配置
 
-bundle patch 只负责插入插件行；自定义配置时，编辑该行的 `config`（在 profile patch 中以 `id: dsh-notify` 覆盖，或取消本包 `cordis.patch.yml` 中的注释）。未写的键始终回退到下面的默认值，因此可以只覆盖部分字段。
+bundle patch 只负责插入插件行；自定义配置时，把本包 `cordis.patch.yml` 中的空 `config: {}` 替换为你的配置（或在 profile patch 中以 `id: dsh-notify` 覆盖）。未写的键始终回退到下面的默认值，因此可以只覆盖部分字段。
 
 ```yaml
 - id: dsh-notify
@@ -89,27 +89,27 @@ bundle patch 只负责插入插件行；自定义配置时，编辑该行的 `co
 | 占位符 | 内容 |
 | --- | --- |
 | `{session}` / `{title}` | 会话标题（优先取日志标题，否则用工作目录名）。 |
-| `{workspace}` | 会话工作目录的文件夹名。 |
-| `{cwd}` | 完整工作目录。 |
+| `{workspace}` | 会话当前工作目录的文件夹名。 |
+| `{cwd}` | 完整当前工作目录（跟随会话内目录切换）。 |
 | `{status}` | 本地化结果文案，如 `completed` / `任务完成`。 |
-| `{emoji}` | 结果表情（✅ ❌ ⏹️ ⚠️ 🔶 ⛔ 🌿）。 |
-| `{duration}` | 轮次耗时，如 `12秒`、`3分5秒`、`1小时2分5秒`。 |
+| `{emoji}` | 结果表情（✅ ❌ ⏹️ ⚠️ 🔶 ⛔）。 |
+| `{duration}` | 轮次耗时，如 `12秒`、`3分5秒`、`1小时2分5秒`；插件激活前已开始的轮次为空。 |
 | `{turn}` | 轮次编号。 |
 | `{sessionId}` | 完整会话 id。 |
-| `{reply}` | 本轮最后一条助手文本的摘要（按需读取）。 |
+| `{reply}` | 本轮实时事件中最后一条助手文本的摘要；不可用时为空。 |
 | `{error}` | `error` 结果对应的错误信息。 |
 
 未知占位符会原样保留，方便发现模板拼写错误。文本会被清理并截断：标题 120 字符、正文 400 字符。
 
 ## 工作原理
 
-1. 插件订阅 `session/event`，记录每个会话的 `turn/start` 时间。
-2. 收到 `turn/end` 后，按 `notifyOn` 过滤结果；默认跳过委派会话，并应用 `minDurationMs` 与 `maxPerMinute`。
-3. 通过可选的 `sessionTitle` 服务读取会话标题；不可用时回退到工作目录名。
-4. 渲染模板，并以 `argv` 方式启动平台通知命令（不经过 shell）。
-5. 向审计日志追加一行 JSON 后立即返回，通知投递不会阻塞 Harness 的轮次关闭。
+1. 插件订阅 `session/event`，记录每个会话的实时 `turn/start` 时间与最后一条 `assistant/message` 文本，不重扫会话日志。
+2. 收到 `turn/end` 后，按 `notifyOn` 过滤结果；默认跳过委派会话，并应用 `minDurationMs`。
+3. 通过可选的 `sessionTitle` 服务读取会话标题，通过可选的 `workingDirectory` 服务读取当前目录；不可用时回退到会话头信息。
+4. 渲染模板，并以 `argv` 方式启动平台通知命令（不经过 shell）；滑动窗口限流只在实际投递时计数。
+5. 异步排队写入审计日志；Harness 的轮次关闭不会等待通知投递或磁盘 I/O。
 
-插件只读取会话日志，不向其中追加任何内容。
+插件只观察实时事件，不向会话日志追加任何内容。
 
 ## 平台说明
 
@@ -133,7 +133,7 @@ v1 不包含零依赖的 toast 通道：`channel: auto` 会解析为 `none` 并�
 
 ## 审计日志
 
-开启 `audit`（默认开启）时，每次投递尝试都会向 `$DSH_HOME/dsh-notify/audit.jsonl`（默认为 `~/.dsh/dsh-notify/audit.jsonl`）追加一行 JSON。记录包含渲染后的标题/正文、通道、结果原因、会话 id/标题、工作目录、轮次、耗时与投递结果。文件权限为 `0600`，超过 512 KiB 时轮转为 `audit.jsonl.1`。
+开启 `audit`（默认开启）时，每次投递尝试都会异步追加一行 JSON 到 `$DSH_HOME/dsh-notify/audit.jsonl`（默认为 `~/.dsh/dsh-notify/audit.jsonl`）。记录包含渲染后的标题/正文、通道、结果原因、会话 id/标题、工作目录、轮次、耗时与投递结果。文件权限为 `0600`，超过 512 KiB 时轮转为 `audit.jsonl.1`。写入串行且为尽力而为：Host 在通知后立即退出时可能丢失最后一行。
 
 通知文本可能包含会话标题或助手回复摘要，但日志只保存在本机。如需关闭，设置 `audit: false` 或将 `auditPath` 指向别处。
 
@@ -151,7 +151,7 @@ v1 不包含零依赖的 toast 通道：`channel: auto` 会解析为 `none` 并�
 ## 开发
 
 ```sh
-node --test test/          # 单元 + 集成测试（24 个用例）
+node --test test/          # 单元 + 集成测试（31 个用例）
 node test/smoke-notify.mjs # 通过同一代码路径发送真实通知
 ```
 
