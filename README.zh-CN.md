@@ -42,7 +42,7 @@ Windows 目前没有零依赖的通知通道：`channel: auto` 会解析为 `non
    - 在 DSH Web UI 打开 **Settings → Plugins**，从本地目录安装该 bundle；或
    - 让 DSH 智能体调用 `plugin_manager` 工具的 `install_bundle` 动作，`target` 填本目录的绝对路径。
 
-   插件管理器会把目录链接进当前 profile，并把 `dsh-notify` 加入 bundle 列表。通常通过 HMR 即时生效；替换已安装的旧副本时可能需要重启 Harness。
+   插件管理器会把目录链接进当前 profile，并把 `dsh-notify` 加入 bundle 列表。Host 半边通常通过 HMR 即时生效；**新增或修改了客户端半边的版本需要完整重启一次 DeepSeek Harness（退出后重新打开）**，因为 Web 客户端插件图在应用启动时才会重新组合。重启前 Host 回退通知仍可正常工作。
 
 3. 单独验证系统通知通道：
 
@@ -51,7 +51,7 @@ Windows 目前没有零依赖的通知通道：`channel: auto` 会解析为 `non
    node test/smoke-notify.mjs --zh   # 中文消息
    ```
 
-4. 结束任意一轮 DSH 任务，轮次关闭时应收到通知。如果安装前客户端页面已经打开，请刷新一次以加载新的客户端 bundle；Host 端回退通道会立即生效。
+4. 结束任意一轮 DSH 任务，轮次关闭时应收到通知。可点击通知需要先完成上面的一次完整重启；重启后审计日志会出现 `client-ready` 记录，通知将由 DeepSeek Harness 发出。
 
 ## 配置
 
@@ -151,7 +151,7 @@ v1 不包含零依赖的 toast 通道：`channel: auto` 会解析为 `none` 并�
 | 没有通知，审计显示 `no supported notification channel` | 平台是否为 macOS/Linux，`channel` 是否被设为 `none`。 |
 | 审计显示 `failed` | 运行 `node test/smoke-notify.mjs`，看最后一行审计的 `error`。 |
 | 审计日志没有记录 | 插件行可能未激活，或 `audit`/`enabled` 被关闭。查看 Plugins 页面与 Host 日志中的 `dsh-notify: active`。 |
-| 收不到可点击的 DeepSeek Harness 通知 | 保持 DSH 客户端页面打开、允许 DeepSeek Harness 通知、确认 `clientNotifications` 未被关闭，并在安装/更新后刷新一次页面。 |
+| 收不到可点击的 DeepSeek Harness 通知 | 安装后需完整重启一次 DeepSeek Harness（客户端插件图在应用启动时组合）；保持客户端页面打开、允许 DeepSeek Harness 通知、确认 `clientNotifications` 未被关闭。客户端半边激活时审计日志会出现 `client-ready` 记录。 |
 | 通知来自「脚本编辑器」 | 当时没有客户端连接，或客户端未能在 `clientFallbackMs` 内显示；这是不可点击的 Host 回退通知。 |
 | 点击通知没有反应 | 会话可能已被归档；否则检查通知权限与客户端控制台。 |
 | 每轮短任务都弹通知 | 调大 `minDurationMs`，或收窄 `notifyOn`。 |

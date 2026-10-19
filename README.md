@@ -42,7 +42,7 @@ Windows currently has no dependency-free notification channel; `channel: auto` r
    - In the DSH Web UI, open **Settings → Plugins** and install the bundle from the checkout directory, or
    - ask the DSH agent to run the `plugin_manager` tool with `action: install_bundle` and the absolute path to this directory.
 
-   The manager links the directory into the profile and adds `dsh-notify` to the profile bundle list. The plugin activates through HMR in most cases; replacing an already-installed copy may require a Harness restart.
+   The manager links the directory into the profile and adds `dsh-notify` to the profile bundle list. The Host half activates through HMR in most cases; a version that adds or changes the client half requires **one full DeepSeek Harness restart** (quit and reopen the app), because the Web client plugin graph is composed at app boot. Host-only fallback notifications work before that restart.
 
 3. Verify the OS channel independently:
 
@@ -51,7 +51,7 @@ Windows currently has no dependency-free notification channel; `channel: auto` r
    node test/smoke-notify.mjs --zh   # Chinese message
    ```
 
-4. End any DSH turn. When the turn closes you should receive the notification. If the client page was already open before installation, reload it once so the new client bundle loads; the Host-only fallback works immediately.
+4. End any DSH turn. When the turn closes you should receive the notification. Clickable notifications require the one-time app restart described above; after it, the audit log contains a `client-ready` line and the banner comes from DeepSeek Harness.
 
 ## Configuration
 
@@ -149,7 +149,7 @@ Notification text can contain session titles or assistant reply snippets; the lo
 | --- | --- |
 | No notification, audit says `no supported notification channel` | Platform is macOS/Linux and `channel` is not `none`. |
 | Audit says `failed` | Run `node test/smoke-notify.mjs`; inspect `error` in the last audit line. |
-| No clickable banner from DeepSeek Harness | Keep the DSH client page open, allow notifications for DeepSeek Harness, confirm `clientNotifications` is not `false`, and reload the page once after installing/updating the plugin. |
+| No clickable banner from DeepSeek Harness | Restart DeepSeek Harness once after installing (the client plugin graph is composed at app boot), keep the client page open, allow notifications for DeepSeek Harness, and confirm `clientNotifications` is not `false`. The audit log gets a `client-ready` line when the client half activates. |
 | Banner appears from **Script Editor** | No client was attached, or the client could not show a notification within `clientFallbackMs`; this is the non-clickable host fallback. |
 | Clicking the banner does nothing | The session may have been archived after it finished; otherwise check the notification permission and the client console. |
 | Nothing in the audit log | The row may not be active, or `audit`/`enabled` is off. Check the Plugins page and the Host log for `dsh-notify: active`. |
