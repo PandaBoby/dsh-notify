@@ -166,7 +166,7 @@ bundle patch 只负责插入插件行；自定义配置时，把本包 `cordis.p
 
 ### Windows
 
-连接 DSH 客户端时可点击通知走客户端通道（Windows toast）；点击时通过 `dsh://open` 唤起窗口。没有客户端时没有 Host 回退通道。
+连接 DSH 客户端时可点击通知走客户端通道（Windows toast）。点击后 Host 会运行 PowerShell 聚焦脚本：打开 `dsh://open`、用 `ShowWindow(SW_RESTORE)` 还原主窗口并调用 `SetForegroundWindow`（附带一次短暂的模拟 Alt 按键，否则 Windows 的前台锁定规则会让后台还原的窗口留在后面）。没有客户端时没有 Host 回退通道。
 
 如果审计显示 `"channel":"client","status":"sent"` 但看不到 toast，说明通知对象已创建但 Windows/Electron 没有显示。请依次检查：
 

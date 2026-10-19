@@ -166,7 +166,7 @@ Requires `notify-send` from libnotify and a running notification daemon. Headles
 
 ### Windows
 
-The clickable client lane works while the DSH client is connected (Windows toast notifications); the focus route opens `dsh://open`. Without a connected client there is no Host fallback channel in v1.
+The clickable client lane works while the DSH client is connected (Windows toast notifications). On click the Host runs a PowerShell focus helper that opens `dsh://open`, restores the main window (`ShowWindow(SW_RESTORE)`) and calls `SetForegroundWindow` (with a short synthetic Alt nudge, because Windows foreground-lock rules otherwise leave a background-restored window behind). Without a connected client there is no Host fallback channel in v1.
 
 If the audit log shows `"channel":"client","status":"sent"` but no toast appears, the notification was constructed but Windows/Electron did not show it. Check, in order:
 

@@ -5,12 +5,23 @@ import { buildFocusCommand, focusDshWindow } from '../lib/focus.js';
 
 test('buildFocusCommand targets the dsh focus deep link per platform', () => {
   assert.deepEqual(buildFocusCommand('darwin'), { command: '/usr/bin/open', args: ['dsh://open'] });
-  assert.deepEqual(buildFocusCommand('win32'), {
-    command: 'cmd.exe',
-    args: ['/c', 'start', '', 'dsh://open'],
-  });
   assert.deepEqual(buildFocusCommand('linux'), { command: 'xdg-open', args: ['dsh://open'] });
   assert.equal(buildFocusCommand('freebsd'), null);
+
+  const windows = buildFocusCommand('win32');
+  assert.equal(windows.command, 'powershell.exe');
+  assert.deepEqual(windows.args.slice(0, -1), [
+    '-NoProfile',
+    '-NonInteractive',
+    '-WindowStyle',
+    'Hidden',
+    '-EncodedCommand',
+  ]);
+  const script = Buffer.from(windows.args.at(-1), 'base64').toString('utf16le');
+  assert.match(script, /dsh:\/\/open/);
+  assert.match(script, /SetForegroundWindow/);
+  assert.match(script, /ShowWindow/);
+  assert.match(script, /\*DeepSeek\*/);
 });
 
 test('focusDshWindow starts a detached command with fixed argv', () => {
