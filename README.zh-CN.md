@@ -166,11 +166,20 @@ bundle patch 只负责插入插件行；自定义配置时，把本包 `cordis.p
 
 ### Windows
 
-v1 不包含零依赖的 toast 通道：`channel: auto` 会解析为 `none` 并只记录一条警告。如需支持，可贡献 PowerShell/WinRT 通道。
+连接 DSH 客户端时可点击通知走客户端通道（Windows toast）；点击时通过 `dsh://open` 唤起窗口。没有客户端时没有 Host 回退通道。
+
+如果审计显示 `"channel":"client","status":"sent"` 但看不到 toast，说明通知对象已创建但 Windows/Electron 没有显示。请依次检查：
+
+1. **设置 → 系统 → 通知**：总开关，以及 **DeepSeek Harness**（或 **Electron**）的通知与横幅开关；关闭专注助手 / 勿扰模式。
+2. **操作中心（`Win + N`）** 是否有记录——横幅可能关闭但历史仍保留。
+3. **从安装后的开始菜单快捷方式启动**（不要用终端、IDE 或便携/未打包版本）。Electron 的 Windows toast 依赖带 AppUserModelID 的开始菜单快捷方式。
+4. 查看审计中的 `client-notification-shown` / `client-notification-error` 记录；`client-ready` 会带上 `Notification.permission`。
+
+插件会一直强引用已创建的通知直到其关闭，并且只使用标准 `body` 选项：部分 Electron Windows 构建会丢弃被 GC 的、或带 `tag`/`renotify` 的 toast。
 
 ## 审计日志
 
-开启 `audit`（默认开启）时，每次投递尝试都会异步追加一行 JSON 到 `$DSH_HOME/dsh-notify/audit.jsonl`（默认为 `~/.dsh/dsh-notify/audit.jsonl`）。记录包含渲染后的标题/正文、通道、结果原因、会话 id/标题、工作目录、轮次、耗时与投递结果。另有两条诊断记录：客户端半边激活时的 `client-ready`，以及点击通知时的 `client-click`（含聚焦深链结果）。文件权限为 `0600`，超过 512 KiB 时轮转为 `audit.jsonl.1`。写入串行且为尽力而为：Host 在通知后立即退出时可能丢失最后一行。
+开启 `audit`（默认开启）时，每次投递尝试都会异步追加一行 JSON 到 `$DSH_HOME/dsh-notify/audit.jsonl`（默认为 `~/.dsh/dsh-notify/audit.jsonl`）。记录包含渲染后的标题/正文、通道、结果原因、会话 id/标题、工作目录、轮次、耗时与投递结果。另有诊断记录：`client-ready`（客户端半边激活，含通知权限）、`client-click`（点击与聚焦深链结果）、`client-notification-shown` / `client-notification-error`（渲染进程报告的通知显示结果）。文件权限为 `0600`，超过 512 KiB 时轮转为 `audit.jsonl.1`。写入串行且为尽力而为：Host 在通知后立即退出时可能丢失最后一行。
 
 通知文本可能包含会话标题或助手回复摘要，但日志只保存在本机。如需关闭，设置 `audit: false` 或将 `auditPath` 指向别处。
 
@@ -183,6 +192,7 @@ v1 不包含零依赖的 toast 通道：`channel: auto` 会解析为 `none` 并�
 | 审计日志没有记录 | 插件行可能未激活，或 `audit`/`enabled` 被关闭。查看 Plugins 页面与 Host 日志中的 `dsh-notify: active`。 |
 | 收不到可点击的 DeepSeek Harness 通知 | 安装后需完整重启一次 DeepSeek Harness（客户端插件图在应用启动时组合）；保持客户端页面打开、允许 DeepSeek Harness 通知、确认 `clientNotifications` 未被关闭。客户端半边激活时审计日志会出现 `client-ready` 记录。 |
 | 通知来自「脚本编辑器」 | 当时没有客户端连接，或客户端未能在 `clientFallbackMs` 内显示；这是不可点击的 Host 回退通知。 |
+| Windows 审计有 `channel:"client","status":"sent"` 但无 toast | 检查 Windows 通知设置与专注助手、操作中心历史，并从安装后的开始菜单快捷方式启动 DSH（AppUserModelID）。参见 Windows 平台说明；`client-notification-shown`/`client-notification-error` 会记录渲染进程的反馈。 |
 | 点击通知没有反应 | 查看审计：出现 `client-click` 说明点击事件已触发并启动了聚焦深链（`focused: true`）；没有该记录说明 Electron 没有把点击事件交给页面。会话也可能已被归档。 |
 | 点击后 DSH 窗口没有到前台 | Host 会打开 `dsh://open` 深链；确认安装版应用已注册 `dsh` scheme，并检查 `client-click` 的 `focused` 字段。客户端窗口已关闭时没有渲染进程能接收点击，请保持窗口存活。 |
 | 每轮短任务都弹通知 | 调大 `minDurationMs`，或收窄 `notifyOn`。 |
@@ -192,7 +202,7 @@ v1 不包含零依赖的 toast 通道：`channel: auto` 会解析为 `none` 并�
 ## 开发
 
 ```sh
-node --test test/          # 单元 + 集成测试（39 个用例）
+node --test test/          # 单元 + 集成测试（40 个用例）
 node test/smoke-notify.mjs # 通过同一代码路径发送真实通知
 ```
 

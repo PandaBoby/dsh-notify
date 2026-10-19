@@ -96,6 +96,22 @@ function registerClientRoutes(ctx, runtime) {
         ),
         registerRoute(
           {
+            path: '/api/dsh-notify/event',
+            methods: ['POST'],
+            requestBody: 'buffered',
+            fetch: async (request) => {
+              try {
+                const body = await readJson(request);
+                return reply({ ok: true, accepted: runtime.markClientEvent(body) });
+              } catch (error) {
+                return reply({ ok: false, error: String(error?.message ?? error) });
+              }
+            },
+          },
+          'dsh-notify: client notification event',
+        ),
+        registerRoute(
+          {
             path: '/api/dsh-notify/focus',
             methods: ['POST'],
             requestBody: 'buffered',

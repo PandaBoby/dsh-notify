@@ -16,8 +16,19 @@ window.__ModuleLoader__.load({
     const ACK_ROUTE = '/api/dsh-notify/ack';
     const READY_ROUTE = '/api/dsh-notify/ready';
     const FOCUS_ROUTE = '/api/dsh-notify/focus';
+    const EVENT_ROUTE = '/api/dsh-notify/event';
     const RETRY_DELAYS_MS = [150, 300, 500];
+    const NOTIFICATION_LIFETIME_MS = 5 * 60_000;
     const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+    /**
+     * Keep constructed notifications alive until they close. Some Electron
+     * Windows builds tie the toast to the JS wrapper; a notification that is
+     * only reachable through its own onclick cycle can be garbage-collected
+     * before Windows displays it.
+     * @type {Set<Notification>}
+     */
+    const activeNotifications = new Set();
 
     async function postJson(path, payload) {
       try {
@@ -48,6 +59,11 @@ window.__ModuleLoader__.load({
       void postJson(ACK_ROUTE, { sessionId, shown });
     }
 
+    /** Report a client-side notification lifecycle event for troubleshooting. */
+    function reportEvent(sessionId, event, detail) {
+      void postJson(EVENT_ROUTE, { sessionId, event, detail });
+    }
+
     async function notifyFinishedSession(ctx, sessionId) {
       const decision = await fetchDecision(sessionId);
       if (!decision) return;
@@ -72,16 +88,31 @@ window.__ModuleLoader__.load({
 
       let notification;
       try {
+        // Keep the option set minimal. `tag`/`renotify` are not reliably
+        // supported by every Electron Windows build and were observed to
+        // suppress the toast; the title/body are plain strings.
         notification = new Notification(decision.title || 'DeepSeek Harness', {
           body: decision.body || '',
-          tag: `dsh-notify:${sessionId}`,
-          renotify: true,
-          silent: false,
         });
       } catch {
         acknowledge(sessionId, false);
+        reportEvent(sessionId, 'notification-error', 'constructor threw');
         return;
       }
+
+      activeNotifications.add(notification);
+      const release = () => {
+        activeNotifications.delete(notification);
+      };
+      const lifetime = setTimeout(release, NOTIFICATION_LIFETIME_MS);
+      if (typeof lifetime.unref === 'function') lifetime.unref();
+      notification.onshow = () => reportEvent(sessionId, 'notification-shown');
+      notification.onerror = (event) =>
+        reportEvent(sessionId, 'notification-error', String(event?.message ?? event ?? 'unknown'));
+      notification.onclose = () => {
+        clearTimeout(lifetime);
+        release();
+      };
 
       notification.onclick = () => {
         // A renderer cannot raise its own OS window reliably. The Host opens
@@ -149,7 +180,10 @@ window.__ModuleLoader__.load({
             unsubscribe();
           };
         });
-        void postJson(READY_ROUTE, { href: location.href });
+        void postJson(READY_ROUTE, {
+          href: location.href,
+          permission: typeof Notification === 'function' ? Notification.permission : 'unsupported',
+        });
         update();
       },
     };

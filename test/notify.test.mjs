@@ -586,6 +586,17 @@ test('runtime queues for the client even when the host notification channel is n
   assert.ok(runtime.takeClientDecision(SESSION_ID));
 });
 
+test('runtime records client notification lifecycle events', () => {
+  const { runtime, audits } = clientRuntime();
+  assert.equal(runtime.markClientEvent({ event: 'notification-shown', sessionId: SESSION_ID }), true);
+  assert.equal(runtime.markClientEvent({ event: 'notification-error', sessionId: SESSION_ID, detail: 'boom' }), true);
+  assert.equal(runtime.markClientEvent({ event: 'arbitrary-event', sessionId: SESSION_ID }), false);
+  assert.equal(audits.length, 2);
+  assert.equal(audits[0].status, 'client-notification-shown');
+  assert.equal(audits[1].status, 'client-notification-error');
+  assert.equal(audits[1].detail, 'boom');
+});
+
 test('runtime dispose cancels pending client timers', () => {
   const { runtime, timers, sent } = clientRuntime();
   runtime.onSessionEvent(makeSession(), turnEnd());

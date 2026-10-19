@@ -166,11 +166,20 @@ Requires `notify-send` from libnotify and a running notification daemon. Headles
 
 ### Windows
 
-The clickable client lane works while the DSH client is connected (Windows toast notifications); the focus route opens `dsh://open`. Without a connected client there is no Host fallback channel in v1. Contribute a PowerShell/WinRT channel if you need one.
+The clickable client lane works while the DSH client is connected (Windows toast notifications); the focus route opens `dsh://open`. Without a connected client there is no Host fallback channel in v1.
+
+If the audit log shows `"channel":"client","status":"sent"` but no toast appears, the notification was constructed but Windows/Electron did not show it. Check, in order:
+
+1. **Settings → System → Notifications**: master switch, then **DeepSeek Harness** (or **Electron**) → enable notifications and banners; turn off Focus Assist / Do Not Disturb.
+2. **Action Center (`Win + N`)** for a stored entry — banners can be disabled while history is kept.
+3. **Launch from the installed Start Menu shortcut** (not a terminal, IDE, or portable/unpacked copy). Electron Windows toasts require a shortcut with an AppUserModelID.
+4. The audit log's `client-notification-shown` / `client-notification-error` records show what the renderer reported; `client-ready` includes the `Notification.permission` value.
+
+The subscription keeps constructed notifications strongly referenced until they close and uses only the standard `body` option: some Electron Windows builds drop toasts that are garbage-collected or created with `tag`/`renotify`.
 
 ## Audit log
 
-When `audit` is enabled (default), each attempt is appended asynchronously as one JSON line to `$DSH_HOME/dsh-notify/audit.jsonl` (`~/.dsh/dsh-notify/audit.jsonl` unless `DSH_HOME` is set). Records contain the rendered title/body, channel, reason, session id/title, working directory, turn, duration and delivery result. Two diagnostic records are also appended: `client-ready` when the Web client half activates, and `client-click` when a notification is clicked (with the focus deep-link result). The file is created with `0600` and rotates to `audit.jsonl.1` at 512 KiB. Writes are serialized and best-effort: a line can be lost if the Host exits immediately after a notification.
+When `audit` is enabled (default), each attempt is appended asynchronously as one JSON line to `$DSH_HOME/dsh-notify/audit.jsonl` (`~/.dsh/dsh-notify/audit.jsonl` unless `DSH_HOME` is set). Records contain the rendered title/body, channel, reason, session id/title, working directory, turn, duration and delivery result. Diagnostic records are also appended: `client-ready` (client half activation, including the notification permission), `client-click` (click plus focus deep-link result), and `client-notification-shown` / `client-notification-error` (what the renderer reported about the toast). The file is created with `0600` and rotates to `audit.jsonl.1` at 512 KiB. Writes are serialized and best-effort: a line can be lost if the Host exits immediately after a notification.
 
 Notification text can contain session titles or assistant reply snippets; the log stays local. Set `audit: false` or point `auditPath` elsewhere if you prefer.
 
@@ -182,6 +191,7 @@ Notification text can contain session titles or assistant reply snippets; the lo
 | Audit says `failed` | Run `node test/smoke-notify.mjs`; inspect `error` in the last audit line. |
 | No clickable banner from DeepSeek Harness | Restart DeepSeek Harness once after installing (the client plugin graph is composed at app boot), keep the client page open, allow notifications for DeepSeek Harness, and confirm `clientNotifications` is not `false`. The audit log gets a `client-ready` line when the client half activates. |
 | Banner appears from **Script Editor** | No client was attached, or the client could not show a notification within `clientFallbackMs`; this is the non-clickable host fallback. |
+| Windows: audit has `channel:"client","status":"sent"` but no toast | Check Windows notification settings and Focus Assist, Action Center history, and launch DSH from its installed Start Menu shortcut (AppUserModelID). See the Windows platform notes; `client-notification-shown`/`client-notification-error` show what the renderer reported. |
 | Clicking the banner does nothing | Check the audit log: a `client-click` record means the click event fired and a focus deep link was started (`focused: true`); no record means Electron did not deliver the notification click. The session may also have been archived. |
 | DSH window does not come to the front | The focus route opens `dsh://open`; confirm the packaged app is the `dsh` scheme handler and check the `client-click` audit's `focused` field. A closed client window has no renderer to receive the click. |
 | Nothing in the audit log | The row may not be active, or `audit`/`enabled` is off. Check the Plugins page and the Host log for `dsh-notify: active`. |
@@ -192,7 +202,7 @@ Notification text can contain session titles or assistant reply snippets; the lo
 ## Development
 
 ```sh
-node --test test/          # unit + integration tests (39 cases)
+node --test test/          # unit + integration tests (40 cases)
 node test/smoke-notify.mjs # real notification through the same code path
 ```
 
