@@ -9,7 +9,7 @@ DeepSeek Harness 本身没有“任务已完成”的提示。`dsh-notify` 是�
 ## 功能
 
 - **轮次结束通知**：订阅持久化的 `session/event` 事件流（`turn/end`），不做轮询。
-- **可点击通知**：连接 DSH Web/桌面客户端时，点击通知会聚焦应用并打开刚结束的会话。
+- **可点击通知**：连接 DSH Web/桌面客户端时，点击通知会通过 `dsh://open` 唤起并聚焦 DSH 窗口，然后打开刚结束的会话。
 - **区分任务结果**：`completed`、`error`、`aborted`、`interrupted`、`max-tokens`、`blocked`。
 - **丰富的消息变量**：会话标题、耗时、回复摘要等均可写入模板（基于实时事件；插件激活前已开始的轮次没有耗时/回复摘要）。
 - **默认只通知根会话**：子智能体、Agent Teams 成员和工作流成员默认不打扰；可用 `includeSubagents` 打开。
@@ -25,11 +25,11 @@ DeepSeek Harness 本身没有“任务已完成”的提示。`dsh-notify` 是�
 - macOS 12+，或带通知守护进程的 Linux 桌面。
 - Node.js 20+（由 Harness 提供）。
 
-Windows 目前没有零依赖的通知通道：`channel: auto` 会解析为 `none`，插件只记录一条警告，不会影响 Harness 运行。
+Windows 上通过客户端通道工作（需保持 DSH 客户端连接）；没有客户端时没有 Host 回退通道：`channel: auto` 会解析为 `none`，只记录一条警告。
 
 ## 安装
 
-`dsh-notify` 是一个 profile bundle：只插入一条 Host 插件行，不含客户端代码。
+`dsh-notify` 是一个 profile bundle：插入一条 Host 插件行，并包含用于可点击通知与会话导航的 Web 客户端半边（`client.js`）。
 
 1. 克隆仓库到固定位置：
 
@@ -110,7 +110,7 @@ bundle patch 只负责插入插件行；自定义配置时，把本包 `cordis.p
 2. 收到 `turn/end` 后，按 `notifyOn` 过滤结果；默认跳过委派会话，并应用 `minDurationMs`。
 3. 通过可选的 `sessionTitle` 服务读取会话标题，通过可选的 `workingDirectory` 服务读取当前目录；不可用时回退到会话头信息。
 4. 渲染模板，并在实际投递时应用滑动窗口限流。
-5. **客户端通道**：`clientNotifications` 开启时，Host 暂存渲染结果；客户端检测到 running → idle 后，通过认证路由领取消息、显示可点击 Notification 并回执。点击通知会聚焦应用并调用 `uiWorkspace.openSession(sessionId)` 打开会话。若在 `clientFallbackMs` 内没有客户端领取并确认（或客户端明确无法显示），Host 改发系统通知。
+5. **客户端通道**：`clientNotifications` 开启时，Host 暂存渲染结果；客户端检测到 running → idle 后，通过认证路由领取消息、显示可点击 Notification 并回执。点击通知会请求 Host 打开 `dsh://open` 深链（由桌面主进程恢复并聚焦真实窗口），随后调用 `uiWorkspace.openSession(sessionId)` 打开会话。若在 `clientFallbackMs` 内没有客户端领取并确认（或客户端明确无法显示），Host 改发系统通知。
 6. **Host 通道**：`clientNotifications` 关闭时，或作为上述回退，Host 以 `argv` 方式启动平台通知命令（不经过 shell）。
 7. 异步排队写入审计日志；Harness 的轮次关闭不会等待通知投递或磁盘 I/O。
 
@@ -120,7 +120,7 @@ bundle patch 只负责插入插件行；自定义配置时，把本包 `cordis.p
 
 ### macOS
 
-连接 DSH 客户端时，通知由 Web/Electron 发出并归属 **DeepSeek Harness**；点击会聚焦应用并打开刚结束的会话。请在 **系统设置 → 通知 → DeepSeek Harness** 中允许通知。
+连接 DSH 客户端时，通知由 Web/Electron 发出并归属 **DeepSeek Harness**；点击会请求 Host 打开 `dsh://open` 深链唤起真实窗口，然后导航到刚结束的会话。请在 **系统设置 → 通知 → DeepSeek Harness** 中允许通知。
 
 没有客户端连接时，Host 回退到通过 `osascript` 发送 `display notification`，此时通知归属 **脚本编辑器（Script Editor）** 且没有点击动作。如果完全收不到通知：
 
@@ -140,7 +140,7 @@ v1 不包含零依赖的 toast 通道：`channel: auto` 会解析为 `none` 并�
 
 ## 审计日志
 
-开启 `audit`（默认开启）时，每次投递尝试都会异步追加一行 JSON 到 `$DSH_HOME/dsh-notify/audit.jsonl`（默认为 `~/.dsh/dsh-notify/audit.jsonl`）。记录包含渲染后的标题/正文、通道、结果原因、会话 id/标题、工作目录、轮次、耗时与投递结果。客户端半边激活时还会追加一条 `client-ready` 记录，便于判断客户端 bundle 是否加载。文件权限为 `0600`，超过 512 KiB 时轮转为 `audit.jsonl.1`。写入串行且为尽力而为：Host 在通知后立即退出时可能丢失最后一行。
+开启 `audit`（默认开启）时，每次投递尝试都会异步追加一行 JSON 到 `$DSH_HOME/dsh-notify/audit.jsonl`（默认为 `~/.dsh/dsh-notify/audit.jsonl`）。记录包含渲染后的标题/正文、通道、结果原因、会话 id/标题、工作目录、轮次、耗时与投递结果。另有两条诊断记录：客户端半边激活时的 `client-ready`，以及点击通知时的 `client-click`（含聚焦深链结果）。文件权限为 `0600`，超过 512 KiB 时轮转为 `audit.jsonl.1`。写入串行且为尽力而为：Host 在通知后立即退出时可能丢失最后一行。
 
 通知文本可能包含会话标题或助手回复摘要，但日志只保存在本机。如需关闭，设置 `audit: false` 或将 `auditPath` 指向别处。
 
@@ -153,7 +153,8 @@ v1 不包含零依赖的 toast 通道：`channel: auto` 会解析为 `none` 并�
 | 审计日志没有记录 | 插件行可能未激活，或 `audit`/`enabled` 被关闭。查看 Plugins 页面与 Host 日志中的 `dsh-notify: active`。 |
 | 收不到可点击的 DeepSeek Harness 通知 | 安装后需完整重启一次 DeepSeek Harness（客户端插件图在应用启动时组合）；保持客户端页面打开、允许 DeepSeek Harness 通知、确认 `clientNotifications` 未被关闭。客户端半边激活时审计日志会出现 `client-ready` 记录。 |
 | 通知来自「脚本编辑器」 | 当时没有客户端连接，或客户端未能在 `clientFallbackMs` 内显示；这是不可点击的 Host 回退通知。 |
-| 点击通知没有反应 | 会话可能已被归档；否则检查通知权限与客户端控制台。 |
+| 点击通知没有反应 | 查看审计：出现 `client-click` 说明点击事件已触发并启动了聚焦深链（`focused: true`）；没有该记录说明 Electron 没有把点击事件交给页面。会话也可能已被归档。 |
+| 点击后 DSH 窗口没有到前台 | Host 会打开 `dsh://open` 深链；确认安装版应用已注册 `dsh` scheme，并检查 `client-click` 的 `focused` 字段。客户端窗口已关闭时没有渲染进程能接收点击，请保持窗口存活。 |
 | 每轮短任务都弹通知 | 调大 `minDurationMs`，或收窄 `notifyOn`。 |
 | Agent Teams 期间通知过多 | 保持 `includeSubagents: false`（默认），或调低 `maxPerMinute`。 |
 | 正在看聊天时也会弹通知 | v1 无法感知窗口焦点，Host 进程看不到窗口是否在前台。 |
@@ -161,11 +162,11 @@ v1 不包含零依赖的 toast 通道：`channel: auto` 会解析为 `none` 并�
 ## 开发
 
 ```sh
-node --test test/          # 单元 + 集成测试（36 个用例）
+node --test test/          # 单元 + 集成测试（39 个用例）
 node test/smoke-notify.mjs # 通过同一代码路径发送真实通知
 ```
 
-本包没有构建步骤、没有依赖：`index.js` 是 Host 入口；`client.js` 是 Web 客户端半边（可点击通知与导航）；`lib/config.js` 负责配置归一化、语言与模板；`lib/decide.js` 是纯通知决策；`lib/notify.js` 构建并执行平台命令；`lib/runtime.js` 把事件、客户端决策队列与 Host 回退串起来。
+本包没有构建步骤、没有依赖：`index.js` 是 Host 入口；`client.js` 是 Web 客户端半边（可点击通知与导航）；`lib/config.js` 负责配置归一化、语言与模板；`lib/decide.js` 是纯通知决策；`lib/focus.js` 通过 `dsh://open` 深链唤起桌面窗口；`lib/notify.js` 构建并执行平台命令；`lib/runtime.js` 把事件、客户端决策队列与 Host 回退串起来。
 
 ## 卸载
 

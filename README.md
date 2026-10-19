@@ -9,7 +9,7 @@ DeepSeek Harness has no built-in "your task is done" signal. `dsh-notify` is a s
 ## Features
 
 - **Turn-end notifications** from the durable `session/event` feed (`turn/end`), not a poller.
-- **Clickable notifications** when the DSH Web/desktop client is attached: clicking the banner focuses the app and opens the finished session.
+- **Clickable notifications** when the DSH Web/desktop client is attached: clicking focuses the app (the Host opens the shell's `dsh://open` deep link) and opens the finished session.
 - **Outcome-aware messages** for `completed`, `error`, `aborted`, `interrupted`, `max-tokens` and `blocked`.
 - **Duration, session title and reply preview** available as template placeholders, built from live events (a turn that began before the plugin activated has no duration or reply preview).
 - **Root sessions only by default**; subagent, teammate and workflow member sessions are skipped unless `includeSubagents` is enabled.
@@ -25,11 +25,11 @@ DeepSeek Harness has no built-in "your task is done" signal. `dsh-notify` is a s
 - macOS 12+ or a Linux desktop with a notification daemon.
 - Node.js 20+ (provided by the Harness).
 
-Windows currently has no dependency-free notification channel; `channel: auto` resolves to `none` there and the plugin logs one warning instead of failing.
+Windows works through the client lane while the DSH client is attached; without a client there is no Host fallback: `channel: auto` resolves to `none` and logs one warning.
 
 ## Install
 
-`dsh-notify` is a profile bundle: it inserts one Host row and ships no client code.
+`dsh-notify` is a profile bundle: it inserts one Host row and ships a Web client half (`client.js`) for clickable notifications and session navigation.
 
 1. Clone this repository somewhere stable:
 
@@ -71,7 +71,8 @@ The bundle patch inserts the row; customize it by replacing the empty `config: {
 | `enabled` | boolean | `true` | Turn the plugin's listener off without uninstalling it. |
 | `channel` | string | `"auto"` | `auto`, `osascript` (macOS), `notify-send` (Linux) or `none`. |
 | `sound` | string | `"Glass"` | macOS system sound name from `/System/Library/Sounds` (without `.aiff`). `""` disables sound. |
-| `notifyOn` | string[] | `["completed", "error"]` | Turn-end reasons that notify. Use `all` for every reason, `[]` for none. || `includeSubagents` | boolean | `false` | Also notify for subagent, teammate and workflow-member turns. |
+| `notifyOn` | string[] | `["completed", "error"]` | Turn-end reasons that notify. Use `all` for every reason, `[]` for none. |
+| `includeSubagents` | boolean | `false` | Also notify for subagent, teammate and workflow-member turns. |
 | `minDurationMs` | number | `0` | Skip turns shorter than this. `0` notifies every turn. |
 | `maxPerMinute` | number | `12` | Sliding-window rate limit across all sessions. `0` disables it. |
 | `locale` | string | `"auto"` | `auto`, `en` or `zh`. `auto` follows `DSH_NOTIFY_LOCALE`, the macOS system locale, `LC_ALL`/`LANG`, then `Intl`. |
@@ -109,7 +110,7 @@ Unknown placeholders stay verbatim so a typo is visible instead of silently disa
 2. On `turn/end` it checks the outcome against `notifyOn`, skips delegated sessions unless configured otherwise, and honors `minDurationMs`.
 3. It resolves the session title through the optional `sessionTitle` service and the effective directory through the optional `workingDirectory` service, falling back to the session header.
 4. It renders the templates and applies the sliding-window rate limit at the point of a real delivery attempt.
-5. **Client lane:** when `clientNotifications` is on, the Host queues the rendered message; the client detects the running → idle transition, claims the message over an authenticated route, shows a clickable Notification, and acknowledges. Clicking focuses the app and calls `uiWorkspace.openSession(sessionId)`. If no client claims and confirms within `clientFallbackMs` (or reports it cannot show one), the Host sends the OS notification instead.
+5. **Client lane:** when `clientNotifications` is on, the Host queues the rendered message; the client detects the running → idle transition, claims the message over an authenticated route, shows a clickable Notification, and acknowledges. Clicking posts to the Host focus route (which opens the shell's `dsh://open` deep link so the desktop main process restores and focuses the window) and then calls `uiWorkspace.openSession(sessionId)`. If no client claims and confirms within `clientFallbackMs` (or reports it cannot show one), the Host sends the OS notification instead.
 6. **Host lane:** when `clientNotifications` is off, or as the fallback above, the Host spawns the platform notification command with `argv` (never a shell).
 7. It queues one JSON line for the audit log asynchronously; the Host turn never waits for notification delivery or disk I/O.
 
@@ -119,7 +120,7 @@ Nothing is appended to the session log; the plugin only observes live events.
 
 ### macOS
 
-With the DSH client attached, the banner is a Web/Electron notification attributed to **DeepSeek Harness**; clicking it focuses the app and opens the finished session. Allow notifications for DeepSeek Harness in **System Settings → Notifications**.
+With the DSH client attached, the banner is a Web/Electron notification attributed to **DeepSeek Harness**; clicking it opens the Host focus route, which raises the real desktop window through `dsh://open`, then navigates to the finished session. Allow notifications for DeepSeek Harness in **System Settings → Notifications**.
 
 Without an attached client, the Host falls back to `display notification` through `osascript`, so macOS attributes that banner to **Script Editor** and it has no click action. If no banner appears at all:
 
@@ -135,11 +136,11 @@ Requires `notify-send` from libnotify and a running notification daemon. Headles
 
 ### Windows
 
-No dependency-free toast channel ships in v1. `channel: auto` resolves to `none` and logs one warning. Contribute a PowerShell/WinRT channel if you need one.
+The clickable client lane works while the DSH client is connected (Windows toast notifications); the focus route opens `dsh://open`. Without a connected client there is no Host fallback channel in v1. Contribute a PowerShell/WinRT channel if you need one.
 
 ## Audit log
 
-When `audit` is enabled (default), each attempt is appended asynchronously as one JSON line to `$DSH_HOME/dsh-notify/audit.jsonl` (`~/.dsh/dsh-notify/audit.jsonl` unless `DSH_HOME` is set). Records contain the rendered title/body, channel, reason, session id/title, working directory, turn, duration and delivery result. A `client-ready` line is also appended when the Web client half activates, which makes a missing client bundle easy to diagnose. The file is created with `0600` and rotates to `audit.jsonl.1` at 512 KiB. Writes are serialized and best-effort: a line can be lost if the Host exits immediately after a notification.
+When `audit` is enabled (default), each attempt is appended asynchronously as one JSON line to `$DSH_HOME/dsh-notify/audit.jsonl` (`~/.dsh/dsh-notify/audit.jsonl` unless `DSH_HOME` is set). Records contain the rendered title/body, channel, reason, session id/title, working directory, turn, duration and delivery result. Two diagnostic records are also appended: `client-ready` when the Web client half activates, and `client-click` when a notification is clicked (with the focus deep-link result). The file is created with `0600` and rotates to `audit.jsonl.1` at 512 KiB. Writes are serialized and best-effort: a line can be lost if the Host exits immediately after a notification.
 
 Notification text can contain session titles or assistant reply snippets; the log stays local. Set `audit: false` or point `auditPath` elsewhere if you prefer.
 
@@ -151,7 +152,8 @@ Notification text can contain session titles or assistant reply snippets; the lo
 | Audit says `failed` | Run `node test/smoke-notify.mjs`; inspect `error` in the last audit line. |
 | No clickable banner from DeepSeek Harness | Restart DeepSeek Harness once after installing (the client plugin graph is composed at app boot), keep the client page open, allow notifications for DeepSeek Harness, and confirm `clientNotifications` is not `false`. The audit log gets a `client-ready` line when the client half activates. |
 | Banner appears from **Script Editor** | No client was attached, or the client could not show a notification within `clientFallbackMs`; this is the non-clickable host fallback. |
-| Clicking the banner does nothing | The session may have been archived after it finished; otherwise check the notification permission and the client console. |
+| Clicking the banner does nothing | Check the audit log: a `client-click` record means the click event fired and a focus deep link was started (`focused: true`); no record means Electron did not deliver the notification click. The session may also have been archived. |
+| DSH window does not come to the front | The focus route opens `dsh://open`; confirm the packaged app is the `dsh` scheme handler and check the `client-click` audit's `focused` field. A closed client window has no renderer to receive the click. |
 | Nothing in the audit log | The row may not be active, or `audit`/`enabled` is off. Check the Plugins page and the Host log for `dsh-notify: active`. |
 | Notification appears for every short turn | Raise `minDurationMs` or narrow `notifyOn`. |
 | Too many notifications during Agent Teams work | Keep `includeSubagents: false` (default) or lower `maxPerMinute`. |
@@ -160,11 +162,11 @@ Notification text can contain session titles or assistant reply snippets; the lo
 ## Development
 
 ```sh
-node --test test/          # unit + integration tests (36 cases)
+node --test test/          # unit + integration tests (39 cases)
 node test/smoke-notify.mjs # real notification through the same code path
 ```
 
-The package has no build step and no dependencies: `index.js` is the Host entry, `client.js` is the Web client half (clickable notifications and navigation), `lib/config.js` handles normalization/locales/templates, `lib/decide.js` is the pure notification decision, `lib/notify.js` builds and runs the platform command, and `lib/runtime.js` wires events, the client decision queue and host fallback together.
+The package has no build step and no dependencies: `index.js` is the Host entry, `client.js` is the Web client half (clickable notifications and navigation), `lib/config.js` handles normalization/locales/templates, `lib/decide.js` is the pure notification decision, `lib/focus.js` raises the desktop window through the shell's `dsh://open` deep link, `lib/notify.js` builds and runs the platform command, and `lib/runtime.js` wires events, the client decision queue and host fallback together.
 
 ## Uninstall
 

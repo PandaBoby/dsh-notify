@@ -15,6 +15,7 @@ window.__ModuleLoader__.load({
     const LATEST_ROUTE = '/api/dsh-notify/latest';
     const ACK_ROUTE = '/api/dsh-notify/ack';
     const READY_ROUTE = '/api/dsh-notify/ready';
+    const FOCUS_ROUTE = '/api/dsh-notify/focus';
     const RETRY_DELAYS_MS = [150, 300, 500];
     const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -83,10 +84,14 @@ window.__ModuleLoader__.load({
       }
 
       notification.onclick = () => {
+        // A renderer cannot raise its own OS window reliably. The Host opens
+        // the shell's dsh://open deep link, whose handler restores/focuses the
+        // real window; then this page navigates to the finished session.
+        void postJson(FOCUS_ROUTE, { sessionId, href: location.href });
         try {
           window.focus();
         } catch {
-          // Focus is best-effort; Electron usually activates the app itself.
+          // Secondary best-effort; the deep link above owns activation.
         }
         try {
           ctx.uiWorkspace.openSession(sessionId);

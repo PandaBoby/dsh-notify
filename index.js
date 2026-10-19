@@ -13,6 +13,7 @@
  */
 
 import { normalizeConfig } from './lib/config.js';
+import { focusDshWindow } from './lib/focus.js';
 import { createRuntime } from './lib/runtime.js';
 
 export const name = 'dsh-notify';
@@ -31,8 +32,10 @@ function reply(value) {
 }
 
 /**
- * Register the two authenticated routes used by the Web client half:
- * `latest` claims a queued decision, `ack` reports whether it was displayed.
+ * Register the authenticated routes used by the Web client half:
+ * `latest` claims a queued decision, `ack` reports whether it was displayed,
+ * `ready` records client activation and `focus` raises the desktop window when
+ * a notification is clicked.
  * @param {object} ctx plugin context
  * @param {ReturnType<typeof createRuntime>} runtime notification runtime
  */
@@ -90,6 +93,24 @@ function registerClientRoutes(ctx, runtime) {
             },
           },
           'dsh-notify: latest decision',
+        ),
+        registerRoute(
+          {
+            path: '/api/dsh-notify/focus',
+            methods: ['POST'],
+            requestBody: 'buffered',
+            fetch: async (request) => {
+              try {
+                const body = await readJson(request);
+                const focused = focusDshWindow();
+                runtime.markClientClick({ sessionId: body.sessionId, href: body.href, focused });
+                return reply({ ok: true, focused });
+              } catch (error) {
+                return reply({ ok: false, error: String(error?.message ?? error) });
+              }
+            },
+          },
+          'dsh-notify: focus window',
         ),
         registerRoute(
           {
