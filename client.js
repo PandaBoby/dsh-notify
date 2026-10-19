@@ -14,6 +14,7 @@ window.__ModuleLoader__.load({
   factory() {
     const LATEST_ROUTE = '/api/dsh-notify/latest';
     const ACK_ROUTE = '/api/dsh-notify/ack';
+    const READY_ROUTE = '/api/dsh-notify/ready';
     const RETRY_DELAYS_MS = [150, 300, 500];
     const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -143,6 +144,7 @@ window.__ModuleLoader__.load({
             unsubscribe();
           };
         });
+        void postJson(READY_ROUTE, { href: location.href });
         update();
       },
     };

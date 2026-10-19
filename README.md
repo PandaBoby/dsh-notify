@@ -139,7 +139,7 @@ No dependency-free toast channel ships in v1. `channel: auto` resolves to `none`
 
 ## Audit log
 
-When `audit` is enabled (default), each attempt is appended asynchronously as one JSON line to `$DSH_HOME/dsh-notify/audit.jsonl` (`~/.dsh/dsh-notify/audit.jsonl` unless `DSH_HOME` is set). Records contain the rendered title/body, channel, reason, session id/title, working directory, turn, duration and delivery result. The file is created with `0600` and rotates to `audit.jsonl.1` at 512 KiB. Writes are serialized and best-effort: a line can be lost if the Host exits immediately after a notification.
+When `audit` is enabled (default), each attempt is appended asynchronously as one JSON line to `$DSH_HOME/dsh-notify/audit.jsonl` (`~/.dsh/dsh-notify/audit.jsonl` unless `DSH_HOME` is set). Records contain the rendered title/body, channel, reason, session id/title, working directory, turn, duration and delivery result. A `client-ready` line is also appended when the Web client half activates, which makes a missing client bundle easy to diagnose. The file is created with `0600` and rotates to `audit.jsonl.1` at 512 KiB. Writes are serialized and best-effort: a line can be lost if the Host exits immediately after a notification.
 
 Notification text can contain session titles or assistant reply snippets; the log stays local. Set `audit: false` or point `auditPath` elsewhere if you prefer.
 

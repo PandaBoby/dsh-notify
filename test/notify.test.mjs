@@ -562,9 +562,11 @@ test('runtime falls back to the host channel when the client cannot show a notif
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.equal(sent.length, 1);
-  assert.equal(audits.length, 1);
-  assert.equal(audits[0].channel, process.platform === 'darwin' ? 'osascript' : resolveChannel(baseConfig()));
-  assert.equal(audits[0].status, 'sent');
+  assert.equal(audits.length, 2);
+  assert.equal(audits[0].channel, 'client');
+  assert.equal(audits[0].status, 'failed');
+  assert.equal(audits[1].channel, process.platform === 'darwin' ? 'osascript' : resolveChannel(baseConfig()));
+  assert.equal(audits[1].status, 'sent');
 });
 
 test('runtime falls back to the host channel when the client never acknowledges', () => {

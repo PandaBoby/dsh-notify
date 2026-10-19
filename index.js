@@ -60,6 +60,23 @@ function registerClientRoutes(ctx, runtime) {
       const disposers = [
         registerRoute(
           {
+            path: '/api/dsh-notify/ready',
+            methods: ['POST'],
+            requestBody: 'buffered',
+            fetch: async (request) => {
+              try {
+                const body = await readJson(request);
+                runtime.markClientReady(body);
+                return reply({ ok: true });
+              } catch (error) {
+                return reply({ ok: false, error: String(error?.message ?? error) });
+              }
+            },
+          },
+          'dsh-notify: client ready',
+        ),
+        registerRoute(
+          {
             path: '/api/dsh-notify/latest',
             methods: ['POST'],
             requestBody: 'buffered',

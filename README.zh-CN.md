@@ -140,7 +140,7 @@ v1 不包含零依赖的 toast 通道：`channel: auto` 会解析为 `none` 并�
 
 ## 审计日志
 
-开启 `audit`（默认开启）时，每次投递尝试都会异步追加一行 JSON 到 `$DSH_HOME/dsh-notify/audit.jsonl`（默认为 `~/.dsh/dsh-notify/audit.jsonl`）。记录包含渲染后的标题/正文、通道、结果原因、会话 id/标题、工作目录、轮次、耗时与投递结果。文件权限为 `0600`，超过 512 KiB 时轮转为 `audit.jsonl.1`。写入串行且为尽力而为：Host 在通知后立即退出时可能丢失最后一行。
+开启 `audit`（默认开启）时，每次投递尝试都会异步追加一行 JSON 到 `$DSH_HOME/dsh-notify/audit.jsonl`（默认为 `~/.dsh/dsh-notify/audit.jsonl`）。记录包含渲染后的标题/正文、通道、结果原因、会话 id/标题、工作目录、轮次、耗时与投递结果。客户端半边激活时还会追加一条 `client-ready` 记录，便于判断客户端 bundle 是否加载。文件权限为 `0600`，超过 512 KiB 时轮转为 `audit.jsonl.1`。写入串行且为尽力而为：Host 在通知后立即退出时可能丢失最后一行。
 
 通知文本可能包含会话标题或助手回复摘要，但日志只保存在本机。如需关闭，设置 `audit: false` 或将 `auditPath` 指向别处。
 
