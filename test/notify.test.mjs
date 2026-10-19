@@ -447,6 +447,7 @@ test('runtime wires turn/end to a sent notification and audit record', async () 
   assert.equal(sent[0].args.at(-2), '✅ Notification work · completed\nAll tests pass.');
   assert.equal(audits.length, 1);
   assert.equal(audits[0].status, 'sent');
+  assert.equal(audits[0].pluginVersion, '0.1.0');
   assert.equal(audits[0].durationMs, 8_000);
   assert.equal(audits[0].sessionTitle, 'Notification work');
   assert.equal(audits[0].cwd, '/tmp/effective-cwd');
