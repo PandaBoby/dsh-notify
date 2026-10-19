@@ -53,6 +53,36 @@ Windows works through the client lane while the DSH client is attached; without 
 
 4. End any DSH turn. When the turn closes you should receive the notification. Clickable notifications require the one-time app restart described above; after it, the audit log contains a `client-ready` line and the banner comes from DeepSeek Harness.
 
+### Install in another DSH
+
+Open **Settings → Plugins → Add plugin** and enter one of:
+
+- `https://github.com/PandaBoby/dsh-notify` — installs the current `main` branch from GitHub. No npm publish is required. (GitHub and direct `.tgz` specs are fetched outside the npm registry, so that machine must be able to reach GitHub; alternatively paste the archive URL `https://github.com/PandaBoby/dsh-notify/archive/refs/heads/main.tar.gz`.)
+- a published npm package name (see **Distribution** below).
+- an absolute local directory path containing this package.
+
+Installing from GitHub pins the fetched commit: after upstream changes, uninstall and install again. A version that adds or changes `client.js` needs one full DSH restart so the Web client plugin graph is recomposed.
+
+## Distribution
+
+> The npm name `dsh-notify` is already used by an unrelated notification plugin, so **do not publish under that name**. Pick a unique name, for example `dsh-notify-native` (available when last checked) or your npm user scope `@<your-npm-user>/dsh-notify`.
+
+To publish under a different name, update these three places together (the client module id must equal the package name):
+
+1. `package.json` → `name`
+2. `cordis.patch.yml` → the inserted row's `name` (the row `id` may stay `dsh-notify`)
+3. `client.js` → `window.__ModuleLoader__.load({ id: '<package name>', ... })`
+
+Then publish:
+
+```sh
+npm login
+npm pack --dry-run       # check the published file list
+npm publish --access public
+```
+
+Users then enter the package name in **Settings → Plugins → Add plugin**; the registry selector supports the official npm registry and the Mainland China mirror. npm/pnpm's supply-chain age policy can defer a freshly published version — if that happens, install the exact version (`<package-name>@0.1.0`) instead of the latest tag.
+
 ## Configuration
 
 The bundle patch inserts the row; customize it by replacing the empty `config: {}` in this package's `cordis.patch.yml` (or in a profile patch targeting `id: dsh-notify`). Missing keys always fall back to the defaults below, so a partial override is safe.

@@ -53,6 +53,36 @@ Windows 上通过客户端通道工作（需保持 DSH 客户端连接）；没�
 
 4. 结束任意一轮 DSH 任务，轮次关闭时应收到通知。可点击通知需要先完成上面的一次完整重启；重启后审计日志会出现 `client-ready` 记录，通知将由 DeepSeek Harness 发出。
 
+### 在其他 DSH 客户端中安装
+
+打开 **Settings → Plugins → 添加插件**，输入以下任意一种：
+
+- `https://github.com/PandaBoby/dsh-notify` —— 直接安装 GitHub `main` 分支，无需发布 npm。GitHub 与 `.tgz` 直链不经过 npm 安装源，需要该机器能访问 GitHub；也可以粘贴归档地址 `https://github.com/PandaBoby/dsh-notify/archive/refs/heads/main.tar.gz`。
+- 已发布的 npm 包名（见下方「发布」）。
+- 本包所在目录的绝对路径。
+
+GitHub 安装会固定在拉取到的 commit；上游更新后需卸载再重装。新增或修改 `client.js` 的版本需要完整重启一次 DSH，客户端插件图才会重新组合。
+
+## 发布
+
+> npm 上的 `dsh-notify` 名称已被另一个无关的通知插件占用，**不要用这个名称发布**。请换一个唯一名称，例如 `dsh-notify-native`（检查时可用），或使用自己的 npm 用户 scope：`@<你的npm用户名>/dsh-notify`。
+
+改名发布时需同步更新以下三处（客户端模块 id 必须与包名一致）：
+
+1. `package.json` → `name`
+2. `cordis.patch.yml` → 插入行的 `name`（行 `id` 可保留 `dsh-notify`）
+3. `client.js` → `window.__ModuleLoader__.load({ id: '<包名>', ... })`
+
+然后发布：
+
+```sh
+npm login
+npm pack --dry-run       # 检查发布文件列表
+npm publish --access public
+```
+
+其他用户即可在 **Settings → Plugins → 添加插件** 中输入包名，安装源支持 npm 官方源与中国大陆镜像源。npm/pnpm 的供应链发布时长策略可能延迟刚发布的版本被自动安装；遇到时请指定精确版本（`<包名>@0.1.0`）而不是 latest。
+
 ## 配置
 
 bundle patch 只负责插入插件行；自定义配置时，把本包 `cordis.patch.yml` 中的空 `config: {}` 替换为你的配置（或在 profile patch 中以 `id: dsh-notify` 覆盖）。未写的键始终回退到下面的默认值，因此可以只覆盖部分字段。
