@@ -179,7 +179,7 @@ bundle patch 只负责插入插件行；自定义配置时，把本包 `cordis.p
 
 ## 审计日志
 
-开启 `audit`（默认开启）时，每次投递尝试都会异步追加一行 JSON 到 `$DSH_HOME/dsh-notify/audit.jsonl`（默认为 `~/.dsh/dsh-notify/audit.jsonl`）。记录包含渲染后的标题/正文、通道、结果原因、会话 id/标题、工作目录、轮次、耗时与投递结果。另有诊断记录：`client-ready`（客户端半边激活，含通知权限）、`client-click`（点击与聚焦深链结果）、`client-notification-shown` / `client-notification-error`（渲染进程报告的通知显示结果）。文件权限为 `0600`，超过 512 KiB 时轮转为 `audit.jsonl.1`。写入串行且为尽力而为：Host 在通知后立即退出时可能丢失最后一行。
+开启 `audit`（默认开启）时，每次投递尝试都会异步追加一行 JSON 到 `$DSH_HOME/dsh-notify/audit.jsonl`（默认为 `~/.dsh/dsh-notify/audit.jsonl`）。记录包含渲染后的标题/正文、通道、结果原因、会话 id/标题、工作目录、轮次、耗时与投递结果。Host 回退记录还带 `fallbackReason`（`client-timeout`、`client-declined` 或 `client-disabled`）。另有诊断记录：`client-ready`（客户端半边激活，含通知权限）、`client-click`（点击与聚焦脚本结果）、`client-notification-shown` / `client-notification-error`（渲染进程报告的通知显示结果）。文件权限为 `0600`，超过 512 KiB 时轮转为 `audit.jsonl.1`。写入串行且为尽力而为：Host 在通知后立即退出时可能丢失最后一行。
 
 通知文本可能包含会话标题或助手回复摘要，但日志只保存在本机。如需关闭，设置 `audit: false` 或将 `auditPath` 指向别处。
 
@@ -191,7 +191,7 @@ bundle patch 只负责插入插件行；自定义配置时，把本包 `cordis.p
 | 审计显示 `failed` | 运行 `node test/smoke-notify.mjs`，看最后一行审计的 `error`。 |
 | 审计日志没有记录 | 插件行可能未激活，或 `audit`/`enabled` 被关闭。查看 Plugins 页面与 Host 日志中的 `dsh-notify: active`。 |
 | 收不到可点击的 DeepSeek Harness 通知 | 安装后需完整重启一次 DeepSeek Harness（客户端插件图在应用启动时组合）；保持客户端页面打开、允许 DeepSeek Harness 通知、确认 `clientNotifications` 未被关闭。客户端半边激活时审计日志会出现 `client-ready` 记录。 |
-| 通知来自「脚本编辑器」 | 当时没有客户端连接，或客户端未能在 `clientFallbackMs` 内显示；这是不可点击的 Host 回退通知。 |
+| 通知来自「脚本编辑器」 | 这是不可点击的 Host 回退通知。审计中的 `fallbackReason` 说明原因：`client-timeout` 表示 `clientFallbackMs` 内没有客户端领取（窗口关闭/重载、后台节流，或会话不在客户端列表）；`client-declined` 表示客户端无法显示；`client-disabled` 表示关闭了 `clientNotifications`。客户端一旦领取，Host 回退计时器就会取消，因此确认较慢不会再产生重复的脚本编辑器通知。 |
 | Windows 审计有 `channel:"client","status":"sent"` 但无 toast | 检查 Windows 通知设置与专注助手、操作中心历史，并从安装后的开始菜单快捷方式启动 DSH（AppUserModelID）。参见 Windows 平台说明；`client-notification-shown`/`client-notification-error` 会记录渲染进程的反馈。 |
 | 点击通知没有反应 | 查看审计：出现 `client-click` 说明点击事件已触发并启动了聚焦深链（`focused: true`）；没有该记录说明 Electron 没有把点击事件交给页面。会话也可能已被归档。 |
 | 点击后 DSH 窗口没有到前台 | Windows 上查看 `client-click` 的 `focused`/`detail`：`focused:false` 表示 PowerShell 聚焦脚本找不到或无法激活窗口（`detail` 是错误）；`focused:true` 表示脚本成功退出，但 Windows 仍可能拒绝前台切换。客户端窗口关闭时没有渲染进程能接收点击。 |

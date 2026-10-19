@@ -533,16 +533,20 @@ function clientRuntime({ config = {}, now = () => 1_000_000, send, audit } = {})
 }
 
 test('runtime queues decisions for a connected client and lets it claim once', () => {
-  const { runtime, sent, audits } = clientRuntime();
+  const { runtime, timers, sent, audits } = clientRuntime();
   runtime.onSessionEvent(makeSession(), turnEnd());
 
   assert.equal(sent.length, 0);
   assert.equal(audits.length, 0);
+  assert.equal(timers.size, 1);
   const decision = runtime.takeClientDecision(SESSION_ID);
   assert.ok(decision);
   assert.equal(decision.sessionId, SESSION_ID);
   assert.equal(decision.reason, 'completed');
   assert.match(decision.body, /demo-app/);
+  // Claiming transfers responsibility to the client; the host fallback timer
+  // must not fire just because the acknowledgement is slow.
+  assert.equal(timers.size, 0);
   assert.equal(runtime.takeClientDecision(SESSION_ID), null);
 
   assert.equal(runtime.ackClientDecision(SESSION_ID, true), true);
@@ -566,16 +570,19 @@ test('runtime falls back to the host channel when the client cannot show a notif
   assert.equal(audits[0].status, 'failed');
   assert.equal(audits[1].channel, process.platform === 'darwin' ? 'osascript' : resolveChannel(baseConfig()));
   assert.equal(audits[1].status, 'sent');
+  assert.equal(audits[1].fallbackReason, 'client-declined');
 });
 
-test('runtime falls back to the host channel when the client never acknowledges', () => {
-  const { runtime, timers, sent } = clientRuntime();
+test('runtime falls back to the host channel when the client never acknowledges', async () => {
+  const { runtime, timers, sent, audits } = clientRuntime();
   runtime.onSessionEvent(makeSession(), turnEnd());
   assert.equal(timers.size, 1);
   const [timer] = [...timers.keys()];
   assert.equal(timer.delay, 2_500);
   timer.callback();
+  await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(sent.length, 1);
+  assert.equal(audits[0].fallbackReason, 'client-timeout');
   assert.equal(runtime.takeClientDecision(SESSION_ID), null);
 });
 
