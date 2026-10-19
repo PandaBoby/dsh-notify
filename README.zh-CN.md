@@ -110,8 +110,8 @@ bundle patch 只负责插入插件行；自定义配置时，把本包 `cordis.p
 2. 收到 `turn/end` 后，按 `notifyOn` 过滤结果；默认跳过委派会话，并应用 `minDurationMs`。
 3. 通过可选的 `sessionTitle` 服务读取会话标题，通过可选的 `workingDirectory` 服务读取当前目录；不可用时回退到会话头信息。
 4. 渲染模板，并在实际投递时应用滑动窗口限流。
-5. **客户端通道**：连接 Web 客户端且 `clientNotifications` 开启时，Host 暂存渲染结果；客户端检测到 running → idle 后，通过认证路由领取消息、显示可点击 Notification 并回执。点击通知会聚焦应用并调用 `uiWorkspace.openSession(sessionId)` 打开会话。若客户端在 `clientFallbackMs` 内未确认（或明确无法显示），Host 改发系统通知。
-6. **Host 通道**：没有客户端时，立即以 `argv` 方式启动平台通知命令（不经过 shell）。
+5. **客户端通道**：`clientNotifications` 开启时，Host 暂存渲染结果；客户端检测到 running → idle 后，通过认证路由领取消息、显示可点击 Notification 并回执。点击通知会聚焦应用并调用 `uiWorkspace.openSession(sessionId)` 打开会话。若在 `clientFallbackMs` 内没有客户端领取并确认（或客户端明确无法显示），Host 改发系统通知。
+6. **Host 通道**：`clientNotifications` 关闭时，或作为上述回退，Host 以 `argv` 方式启动平台通知命令（不经过 shell）。
 7. 异步排队写入审计日志；Harness 的轮次关闭不会等待通知投递或磁盘 I/O。
 
 插件只观察实时事件，不向会话日志追加任何内容。

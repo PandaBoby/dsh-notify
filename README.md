@@ -109,8 +109,8 @@ Unknown placeholders stay verbatim so a typo is visible instead of silently disa
 2. On `turn/end` it checks the outcome against `notifyOn`, skips delegated sessions unless configured otherwise, and honors `minDurationMs`.
 3. It resolves the session title through the optional `sessionTitle` service and the effective directory through the optional `workingDirectory` service, falling back to the session header.
 4. It renders the templates and applies the sliding-window rate limit at the point of a real delivery attempt.
-5. **Client lane:** when a Web client is attached and `clientNotifications` is on, the Host queues the rendered message; the client detects the running → idle transition, claims the message over an authenticated route, shows a clickable Notification, and acknowledges. Clicking focuses the app and calls `uiWorkspace.openSession(sessionId)`. If the client does not confirm within `clientFallbackMs` (or reports it cannot show one), the Host sends the OS notification instead.
-6. **Host lane:** without a client, the Host spawns the platform notification command with `argv` (never a shell) immediately.
+5. **Client lane:** when `clientNotifications` is on, the Host queues the rendered message; the client detects the running → idle transition, claims the message over an authenticated route, shows a clickable Notification, and acknowledges. Clicking focuses the app and calls `uiWorkspace.openSession(sessionId)`. If no client claims and confirms within `clientFallbackMs` (or reports it cannot show one), the Host sends the OS notification instead.
+6. **Host lane:** when `clientNotifications` is off, or as the fallback above, the Host spawns the platform notification command with `argv` (never a shell).
 7. It queues one JSON line for the audit log asynchronously; the Host turn never waits for notification delivery or disk I/O.
 
 Nothing is appended to the session log; the plugin only observes live events.
