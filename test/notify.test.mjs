@@ -428,7 +428,7 @@ test('runtime wires turn/end to a sent notification and audit record', async () 
   };
   const runtime = createRuntime({
     ctx,
-    config: baseConfig({ sound: '', bodyTemplate: '{emoji} {session} · {status}\n{reply}' }),
+    config: baseConfig({ sound: '', clientNotifications: false, bodyTemplate: '{emoji} {session} · {status}\n{reply}' }),
     env: {},
     now: () => 1_000_000,
     send: async (spec) => {
@@ -460,7 +460,7 @@ test('runtime audits suppressed rate limits without consuming a notification', a
   const audits = [];
   const runtime = createRuntime({
     ctx: { logger: {} },
-    config: baseConfig({ maxPerMinute: 1, sound: '' }),
+    config: baseConfig({ maxPerMinute: 1, sound: '', clientNotifications: false }),
     env: {},
     now: () => 1_000_000,
     send: async (spec) => {
@@ -490,7 +490,7 @@ test('runtime reports channel none without sending or consuming quota', async ()
   const audits = [];
   const runtime = createRuntime({
     ctx: { logger: {} },
-    config: baseConfig({ channel: 'none', maxPerMinute: 1 }),
+    config: baseConfig({ channel: 'none', maxPerMinute: 1, clientNotifications: false }),
     env: {},
     now: () => 1_000_000,
     send: async (spec) => {
@@ -517,7 +517,6 @@ function clientRuntime({ config = {}, now = () => 1_000_000, send, audit } = {})
     config: baseConfig({ sound: '', clientNotifications: true, clientFallbackMs: 2_500, ...config }),
     env: {},
     now,
-    hasLiveClient: () => true,
     setTimer: (callback, delay) => {
       const timer = { callback, delay };
       timers.set(timer, true);
