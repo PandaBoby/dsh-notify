@@ -1,0 +1,57 @@
+{
+  "name": "dsh-notify",
+  "version": "0.1.0",
+  "description": "Native task-completion notifications for DeepSeek Harness sessions: macOS Notification Center and Linux notify-send, no shell, zero dependencies.",
+  "icon": "icon.svg",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./lib/*": "./lib/*",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib/",
+    "locale/*.json",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/",
+    "smoke": "node test/smoke-notify.mjs"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "notifications",
+    "macos",
+    "notify-send",
+    "productivity"
+  ],
+  "license": "MIT",
+  "author": "PandaBoby",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PandaBoby/dsh-notify.git"
+  },
+  "homepage": "https://github.com/PandaBoby/dsh-notify#readme",
+  "bugs": {
+    "url": "https://github.com/PandaBoby/dsh-notify/issues"
+  }
+}

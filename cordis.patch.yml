@@ -1,0 +1,21 @@
+# dsh-notify bundle patch: inserts the Host-side notification plugin into the
+# profile. Uncomment and adjust any key below to customize behavior; omitted
+# keys keep the documented defaults (see README.md).
+- insert:
+    - id: dsh-notify
+      name: dsh-notify
+      config: {}
+      # config:
+      #   channel: auto              # auto | osascript | notify-send | none
+      #   sound: Glass               # macOS sound name; "" disables the sound
+      #   notifyOn: [completed, error]
+      #   includeSubagents: false    # also notify for subagent/teammate turns
+      #   minDurationMs: 0           # skip turns shorter than this
+      #   maxPerMinute: 12           # 0 disables the rate limit
+      #   locale: auto               # auto | en | zh
+      #   titleTemplate: DeepSeek Harness
+      #   bodyTemplate: "{emoji} {session} · {status}"
+      #   timeoutMs: 5000
+      #   audit: true                # append attempts to $DSH_HOME/dsh-notify/audit.jsonl
+      #   auditPath: ""              # explicit audit file path
+      #   debug: false
