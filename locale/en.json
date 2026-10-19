@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Task Notifications (dsh-notify)",
-    "description": "Native system notifications when a session's task completes, fails, or is interrupted. Configurable messages, sound, and a local audit trail; no shell, zero dependencies."
+    "description": "Clickable system notifications when a session's task completes, fails, or is interrupted: clicking focuses DeepSeek Harness and opens the finished session. Configurable messages, sound, and a local audit trail."
   }
 }

@@ -1,12 +1,13 @@
 {
   "name": "dsh-notify",
   "version": "0.1.0",
-  "description": "Native task-completion notifications for DeepSeek Harness sessions: macOS Notification Center and Linux notify-send, no shell, zero dependencies.",
+  "description": "Clickable task-completion notifications for DeepSeek Harness sessions: native Web/desktop notifications that focus the app and open the finished session, with macOS osascript and Linux notify-send fallbacks. No shell, zero dependencies.",
   "icon": "icon.svg",
   "type": "module",
   "main": "index.js",
   "exports": {
     ".": "./index.js",
+    "./client": "./client.js",
     "./lib/*": "./lib/*",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg",
@@ -14,6 +15,7 @@
   },
   "files": [
     "index.js",
+    "client.js",
     "lib/",
     "locale/*.json",
     "icon.svg",
@@ -25,6 +27,10 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
     }
   },
   "engines": {

@@ -70,6 +70,8 @@ test('normalizeConfig applies documented defaults', () => {
   assert.equal(config.locale, 'auto');
   assert.equal(config.titleTemplate, 'DeepSeek Harness');
   assert.equal(config.bodyTemplate, '{emoji} {session} · {status}');
+  assert.equal(config.clientNotifications, true);
+  assert.equal(config.clientFallbackMs, 2_500);
   assert.equal(config.timeoutMs, 5_000);
   assert.equal(config.audit, true);
   assert.equal(config.debug, false);
@@ -506,6 +508,128 @@ test('runtime reports channel none without sending or consuming quota', async ()
   assert.equal(audits[0].sessionId, SESSION_ID);
 });
 
+function clientRuntime({ config = {}, now = () => 1_000_000, send, audit } = {}) {
+  const timers = new Map();
+  const sent = [];
+  const audits = [];
+  const runtime = createRuntime({
+    ctx: { logger: {} },
+    config: baseConfig({ sound: '', clientNotifications: true, clientFallbackMs: 2_500, ...config }),
+    env: {},
+    now,
+    hasLiveClient: () => true,
+    setTimer: (callback, delay) => {
+      const timer = { callback, delay };
+      timers.set(timer, true);
+      return timer;
+    },
+    clearTimer: (timer) => timers.delete(timer),
+    send: send ?? (async (spec) => {
+      sent.push(spec);
+      return { ok: true };
+    }),
+    audit: audit ?? ((config, record) => audits.push(record)),
+  });
+  return { runtime, timers, sent, audits };
+}
+
+test('runtime queues decisions for a connected client and lets it claim once', () => {
+  const { runtime, sent, audits } = clientRuntime();
+  runtime.onSessionEvent(makeSession(), turnEnd());
+
+  assert.equal(sent.length, 0);
+  assert.equal(audits.length, 0);
+  const decision = runtime.takeClientDecision(SESSION_ID);
+  assert.ok(decision);
+  assert.equal(decision.sessionId, SESSION_ID);
+  assert.equal(decision.reason, 'completed');
+  assert.match(decision.body, /demo-app/);
+  assert.equal(runtime.takeClientDecision(SESSION_ID), null);
+
+  assert.equal(runtime.ackClientDecision(SESSION_ID, true), true);
+  assert.equal(audits.length, 1);
+  assert.equal(audits[0].status, 'sent');
+  assert.equal(audits[0].channel, 'client');
+  assert.equal(audits[0].ok, true);
+  assert.equal(runtime.ackClientDecision(SESSION_ID, true), false);
+});
+
+test('runtime falls back to the host channel when the client cannot show a notification', async () => {
+  const { runtime, sent, audits } = clientRuntime();
+  runtime.onSessionEvent(makeSession(), turnEnd());
+  runtime.takeClientDecision(SESSION_ID);
+  runtime.ackClientDecision(SESSION_ID, false);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(sent.length, 1);
+  assert.equal(audits.length, 1);
+  assert.equal(audits[0].channel, process.platform === 'darwin' ? 'osascript' : resolveChannel(baseConfig()));
+  assert.equal(audits[0].status, 'sent');
+});
+
+test('runtime falls back to the host channel when the client never acknowledges', () => {
+  const { runtime, timers, sent } = clientRuntime();
+  runtime.onSessionEvent(makeSession(), turnEnd());
+  assert.equal(timers.size, 1);
+  const [timer] = [...timers.keys()];
+  assert.equal(timer.delay, 2_500);
+  timer.callback();
+  assert.equal(sent.length, 1);
+  assert.equal(runtime.takeClientDecision(SESSION_ID), null);
+});
+
+test('runtime queues for the client even when the host notification channel is none', () => {
+  const { runtime, audits } = clientRuntime({ config: { channel: 'none' } });
+  runtime.onSessionEvent(makeSession(), turnEnd());
+  assert.equal(audits.length, 0);
+  assert.ok(runtime.takeClientDecision(SESSION_ID));
+});
+
+test('runtime dispose cancels pending client timers', () => {
+  const { runtime, timers, sent } = clientRuntime();
+  runtime.onSessionEvent(makeSession(), turnEnd());
+  assert.equal(timers.size, 1);
+  runtime.dispose();
+  assert.equal(timers.size, 0);
+  assert.equal(sent.length, 0);
+});
+
+test('apply registers Host listeners, cleanup and routes', () => {
+  const listeners = new Map();
+  const effects = [];
+  const injections = [];
+  const runEffect = (callback) => {
+    const cleanup = callback();
+    if (typeof cleanup === 'function') effects.push(cleanup);
+    return () => {};
+  };
+  const ctx = {
+    logger: { info() {}, debug() {}, warn() {} },
+    on(name, handler) {
+      listeners.set(name, handler);
+      return () => listeners.delete(name);
+    },
+    effect: runEffect,
+    inject(names, callback) {
+      injections.push(names.join(','));
+      callback({
+        get: (name) => (name === 'connection' ? { fetch: { register: () => () => {} } } : undefined),
+        effect: runEffect,
+      });
+      return () => {};
+    },
+  };
+  apply(ctx, {});
+  assert.equal(typeof listeners.get('session/event'), 'function');
+  assert.equal(typeof listeners.get('session/disposed'), 'function');
+  assert.ok(injections.includes('connection'));
+  assert.ok(effects.length >= 2);
+
+  const quiet = new Map();
+  apply({ ...ctx, on: (name, handler) => (quiet.set(name, handler), () => {}) }, { enabled: false });
+  assert.equal(quiet.size, 0);
+});
+
 test('appendAudit writes a private, parseable JSONL record', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'dsh-notify-test-'));
   try {
@@ -530,25 +654,8 @@ test('resolveDshHome honors DSH_HOME from the environment', () => {
   assert.equal(resolveDshHome({}), join(process.env.HOME ?? '', '.dsh'));
 });
 
-test('apply registers Host listeners and honors enabled: false', () => {
-  const listeners = new Map();
-  const ctx = {
-    logger: { info() {}, debug() {}, warn() {} },
-    on(name, handler) {
-      listeners.set(name, handler);
-      return () => listeners.delete(name);
-    },
-  };
-  apply(ctx, {});
-  assert.equal(typeof listeners.get('session/event'), 'function');
-  assert.equal(typeof listeners.get('session/disposed'), 'function');
-
-  const quiet = new Map();
-  apply({ ...ctx, on: (name, handler) => (quiet.set(name, handler), () => {}) }, { enabled: false });
-  assert.equal(quiet.size, 0);
-});
-
 test('DEFAULT_CONFIG is frozen', () => {
   assert.ok(Object.isFrozen(DEFAULT_CONFIG));
   assert.ok(Object.isFrozen(DEFAULT_CONFIG.notifyOn));
 });
+

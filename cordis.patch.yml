@@ -2,6 +2,22 @@
 # profile. To customize, replace the empty `config: {}` mapping below with any
 # of the keys documented in README.md; omitted keys keep their documented
 # defaults, so a partial override is safe.
+#
+#   channel: auto                 # auto | osascript | notify-send | none
+#   sound: Glass                  # macOS sound name; "" disables the sound
+#   notifyOn: [completed, error]
+#   includeSubagents: false
+#   minDurationMs: 0
+#   maxPerMinute: 12
+#   locale: auto                  # auto | en | zh
+#   titleTemplate: DeepSeek Harness
+#   bodyTemplate: "{emoji} {session} · {status}"
+#   clientNotifications: true     # clickable client notification + navigation
+#   clientFallbackMs: 2500        # host fallback when the client cannot show it
+#   timeoutMs: 5000
+#   audit: true
+#   auditPath: ""
+#   debug: false
 - insert:
     - id: dsh-notify
       name: dsh-notify

@@ -9,6 +9,7 @@ DeepSeek Harness has no built-in "your task is done" signal. `dsh-notify` is a s
 ## Features
 
 - **Turn-end notifications** from the durable `session/event` feed (`turn/end`), not a poller.
+- **Clickable notifications** when the DSH Web/desktop client is attached: clicking the banner focuses the app and opens the finished session.
 - **Outcome-aware messages** for `completed`, `error`, `aborted`, `interrupted`, `max-tokens` and `blocked`.
 - **Duration, session title and reply preview** available as template placeholders, built from live events (a turn that began before the plugin activated has no duration or reply preview).
 - **Root sessions only by default**; subagent, teammate and workflow member sessions are skipped unless `includeSubagents` is enabled.
@@ -50,7 +51,7 @@ Windows currently has no dependency-free notification channel; `channel: auto` r
    node test/smoke-notify.mjs --zh   # Chinese message
    ```
 
-4. End any DSH turn. When the turn closes you should receive the notification.
+4. End any DSH turn. When the turn closes you should receive the notification. If the client page was already open before installation, reload it once so the new client bundle loads; the Host-only fallback works immediately.
 
 ## Configuration
 
@@ -76,6 +77,8 @@ The bundle patch inserts the row; customize it by replacing the empty `config: {
 | `locale` | string | `"auto"` | `auto`, `en` or `zh`. `auto` follows `DSH_NOTIFY_LOCALE`, the macOS system locale, `LC_ALL`/`LANG`, then `Intl`. |
 | `titleTemplate` | string | `"DeepSeek Harness"` | Notification title template. |
 | `bodyTemplate` | string | `"{emoji} {session} · {status}"` | Notification body template. `\n` is allowed. |
+| `clientNotifications` | boolean | `true` | When a Web client is attached, let it show a clickable notification; the Host falls back to the OS channel if the client cannot display it. |
+| `clientFallbackMs` | number | `2500` | Grace period for the client to confirm display before the Host sends its own notification. |
 | `timeoutMs` | number | `5000` | Kill the notification command after this many milliseconds. |
 | `audit` | boolean | `true` | Append delivery attempts to the audit log. |
 | `auditPath` | string | `""` | Override the audit log path. `~` expands to the home directory. |
@@ -105,8 +108,10 @@ Unknown placeholders stay verbatim so a typo is visible instead of silently disa
 1. The plugin subscribes to `session/event` and records each session's live `turn/start` time and last `assistant/message` text. It never rescans a session log.
 2. On `turn/end` it checks the outcome against `notifyOn`, skips delegated sessions unless configured otherwise, and honors `minDurationMs`.
 3. It resolves the session title through the optional `sessionTitle` service and the effective directory through the optional `workingDirectory` service, falling back to the session header.
-4. It renders the templates and spawns the platform notification command with `argv` (never a shell), applying the sliding-window rate limit at the point of a real delivery attempt.
-5. It queues one JSON line for the audit log asynchronously; the Host turn never waits for notification delivery or disk I/O.
+4. It renders the templates and applies the sliding-window rate limit at the point of a real delivery attempt.
+5. **Client lane:** when a Web client is attached and `clientNotifications` is on, the Host queues the rendered message; the client detects the running → idle transition, claims the message over an authenticated route, shows a clickable Notification, and acknowledges. Clicking focuses the app and calls `uiWorkspace.openSession(sessionId)`. If the client does not confirm within `clientFallbackMs` (or reports it cannot show one), the Host sends the OS notification instead.
+6. **Host lane:** without a client, the Host spawns the platform notification command with `argv` (never a shell) immediately.
+7. It queues one JSON line for the audit log asynchronously; the Host turn never waits for notification delivery or disk I/O.
 
 Nothing is appended to the session log; the plugin only observes live events.
 
@@ -114,9 +119,11 @@ Nothing is appended to the session log; the plugin only observes live events.
 
 ### macOS
 
-`display notification` is delivered through `osascript`, so macOS attributes the banner to **Script Editor**. If no banner appears:
+With the DSH client attached, the banner is a Web/Electron notification attributed to **DeepSeek Harness**; clicking it focuses the app and opens the finished session. Allow notifications for DeepSeek Harness in **System Settings → Notifications**.
 
-1. Open **System Settings → Notifications → Script Editor** and allow notifications.
+Without an attached client, the Host falls back to `display notification` through `osascript`, so macOS attributes that banner to **Script Editor** and it has no click action. If no banner appears at all:
+
+1. Open **System Settings → Notifications → DeepSeek Harness** (client lane) or **Script Editor** (host fallback) and allow notifications.
 2. Check that Focus / Do Not Disturb is off.
 3. Run `node test/smoke-notify.mjs` and check the audit log (`~/.dsh/dsh-notify/audit.jsonl` by default).
 
@@ -142,6 +149,9 @@ Notification text can contain session titles or assistant reply snippets; the lo
 | --- | --- |
 | No notification, audit says `no supported notification channel` | Platform is macOS/Linux and `channel` is not `none`. |
 | Audit says `failed` | Run `node test/smoke-notify.mjs`; inspect `error` in the last audit line. |
+| No clickable banner from DeepSeek Harness | Keep the DSH client page open, allow notifications for DeepSeek Harness, confirm `clientNotifications` is not `false`, and reload the page once after installing/updating the plugin. |
+| Banner appears from **Script Editor** | No client was attached, or the client could not show a notification within `clientFallbackMs`; this is the non-clickable host fallback. |
+| Clicking the banner does nothing | The session may have been archived after it finished; otherwise check the notification permission and the client console. |
 | Nothing in the audit log | The row may not be active, or `audit`/`enabled` is off. Check the Plugins page and the Host log for `dsh-notify: active`. |
 | Notification appears for every short turn | Raise `minDurationMs` or narrow `notifyOn`. |
 | Too many notifications during Agent Teams work | Keep `includeSubagents: false` (default) or lower `maxPerMinute`. |
@@ -150,11 +160,11 @@ Notification text can contain session titles or assistant reply snippets; the lo
 ## Development
 
 ```sh
-node --test test/          # unit + integration tests (31 cases)
+node --test test/          # unit + integration tests (36 cases)
 node test/smoke-notify.mjs # real notification through the same code path
 ```
 
-The package has no build step and no dependencies: `index.js` is the Host entry, `lib/config.js` handles normalization/locales/templates, `lib/decide.js` is the pure notification decision, `lib/notify.js` builds and runs the platform command, and `lib/runtime.js` wires the two together.
+The package has no build step and no dependencies: `index.js` is the Host entry, `client.js` is the Web client half (clickable notifications and navigation), `lib/config.js` handles normalization/locales/templates, `lib/decide.js` is the pure notification decision, `lib/notify.js` builds and runs the platform command, and `lib/runtime.js` wires events, the client decision queue and host fallback together.
 
 ## Uninstall
 
