@@ -13,7 +13,7 @@
  */
 
 import { normalizeConfig } from './lib/config.js';
-import { focusDshWindow } from './lib/focus.js';
+import { runFocusCommand } from './lib/focus.js';
 import { createRuntime } from './lib/runtime.js';
 
 export const name = 'dsh-notify';
@@ -118,9 +118,14 @@ function registerClientRoutes(ctx, runtime) {
             fetch: async (request) => {
               try {
                 const body = await readJson(request);
-                const focused = focusDshWindow();
-                runtime.markClientClick({ sessionId: body.sessionId, href: body.href, focused });
-                return reply({ ok: true, focused });
+                const focus = await runFocusCommand();
+                runtime.markClientClick({
+                  sessionId: body.sessionId,
+                  href: body.href,
+                  focused: focus.ok,
+                  detail: focus.error,
+                });
+                return reply({ ok: true, focused: focus.ok, detail: focus.error });
               } catch (error) {
                 return reply({ ok: false, error: String(error?.message ?? error) });
               }

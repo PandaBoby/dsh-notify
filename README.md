@@ -166,7 +166,7 @@ Requires `notify-send` from libnotify and a running notification daemon. Headles
 
 ### Windows
 
-The clickable client lane works while the DSH client is connected (Windows toast notifications). On click the Host runs a PowerShell focus helper that opens `dsh://open`, restores the main window (`ShowWindow(SW_RESTORE)`) and calls `SetForegroundWindow` (with a short synthetic Alt nudge, because Windows foreground-lock rules otherwise leave a background-restored window behind). Without a connected client there is no Host fallback channel in v1.
+The clickable client lane works while the DSH client is connected (Windows toast notifications). On click the Host runs a PowerShell focus helper that opens `dsh://open`, restores the main window (`ShowWindow(SW_RESTORE)`), raises it once with `SetWindowPos(HWND_TOPMOST)` so it becomes visible, then uses `SwitchToThisWindow` + `SetForegroundWindow` (with a short synthetic Alt nudge) to win the foreground. The click audit's `focused` field now reflects the helper's real exit status, and `detail` carries its error when it fails. Without a connected client there is no Host fallback channel in v1.
 
 If the audit log shows `"channel":"client","status":"sent"` but no toast appears, the notification was constructed but Windows/Electron did not show it. Check, in order:
 
@@ -193,7 +193,7 @@ Notification text can contain session titles or assistant reply snippets; the lo
 | Banner appears from **Script Editor** | No client was attached, or the client could not show a notification within `clientFallbackMs`; this is the non-clickable host fallback. |
 | Windows: audit has `channel:"client","status":"sent"` but no toast | Check Windows notification settings and Focus Assist, Action Center history, and launch DSH from its installed Start Menu shortcut (AppUserModelID). See the Windows platform notes; `client-notification-shown`/`client-notification-error` show what the renderer reported. |
 | Clicking the banner does nothing | Check the audit log: a `client-click` record means the click event fired and a focus deep link was started (`focused: true`); no record means Electron did not deliver the notification click. The session may also have been archived. |
-| DSH window does not come to the front | The focus route opens `dsh://open`; confirm the packaged app is the `dsh` scheme handler and check the `client-click` audit's `focused` field. A closed client window has no renderer to receive the click. |
+| DSH window does not come to the front | On Windows the click audit's `focused`/`detail` fields report the PowerShell focus helper: `focused:false` with `detail` means the helper could not find or raise the window; `focused:true` means the helper exited successfully but Windows may still have denied foreground activation. A closed client window has no renderer to receive the click. |
 | Nothing in the audit log | The row may not be active, or `audit`/`enabled` is off. Check the Plugins page and the Host log for `dsh-notify: active`. |
 | Notification appears for every short turn | Raise `minDurationMs` or narrow `notifyOn`. |
 | Too many notifications during Agent Teams work | Keep `includeSubagents: false` (default) or lower `maxPerMinute`. |

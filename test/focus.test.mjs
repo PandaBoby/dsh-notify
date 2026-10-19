@@ -1,7 +1,26 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import test from 'node:test';
 
-import { buildFocusCommand, focusDshWindow } from '../lib/focus.js';
+import { buildFocusCommand, runFocusCommand } from '../lib/focus.js';
+
+function fakeSpawn({ code = 0, stderr = '' } = {}) {
+  return (command, args, options) => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdout.text = '';
+    child.stderr.text = '';
+    child.kill = () => {};
+    child.args = args;
+    child.options = options;
+    setImmediate(() => {
+      if (stderr !== '') child.stderr.emit('data', stderr);
+      child.emit('close', code);
+    });
+    return child;
+  };
+}
 
 test('buildFocusCommand targets the dsh focus deep link per platform', () => {
   assert.deepEqual(buildFocusCommand('darwin'), { command: '/usr/bin/open', args: ['dsh://open'] });
@@ -20,28 +39,34 @@ test('buildFocusCommand targets the dsh focus deep link per platform', () => {
   const script = Buffer.from(windows.args.at(-1), 'base64').toString('utf16le');
   assert.match(script, /dsh:\/\/open/);
   assert.match(script, /SetForegroundWindow/);
+  assert.match(script, /SetWindowPos/);
+  assert.match(script, /SwitchToThisWindow/);
   assert.match(script, /ShowWindow/);
   assert.match(script, /\*DeepSeek\*/);
 });
 
-test('focusDshWindow starts a detached command with fixed argv', () => {
-  const calls = [];
-  const fakeSpawn = (command, args, options) => {
-    calls.push({ command, args, options });
-    return { on() {}, unref() {} };
-  };
-  assert.equal(focusDshWindow({ platform: 'darwin', spawnFn: fakeSpawn }), true);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].command, '/usr/bin/open');
-  assert.deepEqual(calls[0].args, ['dsh://open']);
-  assert.equal(calls[0].options.detached, true);
-  assert.equal(calls[0].options.stdio, 'ignore');
+test('runFocusCommand settles on the helper exit status', async () => {
+  const success = await runFocusCommand({ platform: 'darwin', spawnFn: fakeSpawn({ code: 0 }) });
+  assert.equal(success.ok, true);
+  assert.equal(success.command, '/usr/bin/open');
+
+  const failure = await runFocusCommand({
+    platform: 'win32',
+    spawnFn: fakeSpawn({ code: 3, stderr: 'main window not found' }),
+  });
+  assert.equal(failure.ok, false);
+  assert.equal(failure.code, 3);
+  assert.match(failure.error, /main window not found/);
 });
 
-test('focusDshWindow reports unsupported platforms and spawn failures', () => {
-  assert.equal(focusDshWindow({ platform: 'freebsd', spawnFn: () => { throw new Error('unused'); } }), false);
-  const throwing = () => {
-    throw new Error('spawn unavailable');
-  };
-  assert.equal(focusDshWindow({ platform: 'darwin', spawnFn: throwing }), false);
+test('runFocusCommand refuses unsupported platforms without spawning', async () => {
+  let spawned = false;
+  const result = await runFocusCommand({
+    platform: 'freebsd',
+    spawnFn: () => {
+      spawned = true;
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(spawned, false);
 });

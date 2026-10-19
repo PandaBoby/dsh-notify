@@ -166,7 +166,7 @@ bundle patch 只负责插入插件行；自定义配置时，把本包 `cordis.p
 
 ### Windows
 
-连接 DSH 客户端时可点击通知走客户端通道（Windows toast）。点击后 Host 会运行 PowerShell 聚焦脚本：打开 `dsh://open`、用 `ShowWindow(SW_RESTORE)` 还原主窗口并调用 `SetForegroundWindow`（附带一次短暂的模拟 Alt 按键，否则 Windows 的前台锁定规则会让后台还原的窗口留在后面）。没有客户端时没有 Host 回退通道。
+连接 DSH 客户端时可点击通知走客户端通道（Windows toast）。点击后 Host 会运行 PowerShell 聚焦脚本：打开 `dsh://open`、用 `ShowWindow(SW_RESTORE)` 还原主窗口、用 `SetWindowPos(HWND_TOPMOST)` 临时置顶使其可见，再通过 `SwitchToThisWindow` + `SetForegroundWindow`（附带一次短暂的模拟 Alt 按键）争取前台。`client-click` 审计里的 `focused` 现在是聚焦脚本的真实退出结果，失败时 `detail` 会带错误信息。没有客户端时没有 Host 回退通道。
 
 如果审计显示 `"channel":"client","status":"sent"` 但看不到 toast，说明通知对象已创建但 Windows/Electron 没有显示。请依次检查：
 
@@ -194,7 +194,7 @@ bundle patch 只负责插入插件行；自定义配置时，把本包 `cordis.p
 | 通知来自「脚本编辑器」 | 当时没有客户端连接，或客户端未能在 `clientFallbackMs` 内显示；这是不可点击的 Host 回退通知。 |
 | Windows 审计有 `channel:"client","status":"sent"` 但无 toast | 检查 Windows 通知设置与专注助手、操作中心历史，并从安装后的开始菜单快捷方式启动 DSH（AppUserModelID）。参见 Windows 平台说明；`client-notification-shown`/`client-notification-error` 会记录渲染进程的反馈。 |
 | 点击通知没有反应 | 查看审计：出现 `client-click` 说明点击事件已触发并启动了聚焦深链（`focused: true`）；没有该记录说明 Electron 没有把点击事件交给页面。会话也可能已被归档。 |
-| 点击后 DSH 窗口没有到前台 | Host 会打开 `dsh://open` 深链；确认安装版应用已注册 `dsh` scheme，并检查 `client-click` 的 `focused` 字段。客户端窗口已关闭时没有渲染进程能接收点击，请保持窗口存活。 |
+| 点击后 DSH 窗口没有到前台 | Windows 上查看 `client-click` 的 `focused`/`detail`：`focused:false` 表示 PowerShell 聚焦脚本找不到或无法激活窗口（`detail` 是错误）；`focused:true` 表示脚本成功退出，但 Windows 仍可能拒绝前台切换。客户端窗口关闭时没有渲染进程能接收点击。 |
 | 每轮短任务都弹通知 | 调大 `minDurationMs`，或收窄 `notifyOn`。 |
 | Agent Teams 期间通知过多 | 保持 `includeSubagents: false`（默认），或调低 `maxPerMinute`。 |
 | 正在看聊天时也会弹通知 | v1 无法感知窗口焦点，Host 进程看不到窗口是否在前台。 |
