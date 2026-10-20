@@ -80,6 +80,25 @@ function registerClientRoutes(ctx, runtime) {
         ),
         registerRoute(
           {
+            path: '/api/dsh-notify/wait',
+            methods: ['POST'],
+            requestBody: 'buffered',
+            fetch: async (request) => {
+              try {
+                const decisions = await runtime.waitForClientDecisions({
+                  signal: request.signal,
+                  timeoutMs: 20_000,
+                });
+                return reply({ ok: true, value: decisions });
+              } catch (error) {
+                return reply({ ok: false, error: String(error?.message ?? error) });
+              }
+            },
+          },
+          'dsh-notify: wait for decisions',
+        ),
+        registerRoute(
+          {
             path: '/api/dsh-notify/latest',
             methods: ['POST'],
             requestBody: 'buffered',

@@ -604,6 +604,26 @@ test('runtime records client notification lifecycle events', () => {
   assert.equal(audits[1].detail, 'boom');
 });
 
+test('runtime long-poll wakes immediately when a decision is queued', async () => {
+  const { runtime } = clientRuntime();
+  const pending = runtime.waitForClientDecisions({ timeoutMs: 1_000 });
+  runtime.onSessionEvent(makeSession(), turnEnd());
+  const decisions = await pending;
+  assert.equal(decisions.length, 1);
+  assert.equal(decisions[0].sessionId, SESSION_ID);
+  assert.equal(decisions[0].reason, 'completed');
+  assert.equal(runtime.takePendingClientDecisions().length, 0);
+});
+
+test('runtime long-poll resolves empty on timeout', async () => {
+  const { runtime, timers } = clientRuntime();
+  const pending = runtime.waitForClientDecisions({ timeoutMs: 1_000 });
+  const waitTimer = [...timers.keys()].find((timer) => timer.delay === 1_000);
+  assert.ok(waitTimer);
+  waitTimer.callback();
+  assert.deepEqual(await pending, []);
+});
+
 test('runtime dispose cancels pending client timers', () => {
   const { runtime, timers, sent } = clientRuntime();
   runtime.onSessionEvent(makeSession(), turnEnd());

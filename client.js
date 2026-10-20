@@ -1,23 +1,24 @@
 /**
  * dsh-notify — Web client half.
  *
- * The Host renders the notification text (title, body, outcome) and queues it
- * when this page is connected. This module detects a root session transitioning
- * from running to idle, claims the queued message through the authenticated
- * Host route, shows a native browser/Electron Notification, and reports whether
- * it was displayed. Clicking the notification focuses the app and opens the
- * finished session through the Client workspace service.
+ * The Host decides which turn-end events deserve a notification, renders the
+ * text, and queues the decision. This client holds one authenticated long-poll
+ * open against the Host; a queued decision wakes it immediately, so sessions
+ * outside the current workspace (which never appear in the visible session
+ * list) still produce clickable notifications. The client shows a native
+ * Notification and reports whether it was displayed. Clicking focuses the app
+ * and opens the finished session.
  */
 
 window.__ModuleLoader__.load({
   id: 'dsh-notify',
   factory() {
-    const LATEST_ROUTE = '/api/dsh-notify/latest';
+    const WAIT_ROUTE = '/api/dsh-notify/wait';
     const ACK_ROUTE = '/api/dsh-notify/ack';
     const READY_ROUTE = '/api/dsh-notify/ready';
     const FOCUS_ROUTE = '/api/dsh-notify/focus';
     const EVENT_ROUTE = '/api/dsh-notify/event';
-    const RETRY_DELAYS_MS = [150, 300, 500];
+    const RETRY_DELAY_MS = 1_500;
     const NOTIFICATION_LIFETIME_MS = 5 * 60_000;
     const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -30,29 +31,19 @@ window.__ModuleLoader__.load({
      */
     const activeNotifications = new Set();
 
-    async function postJson(path, payload) {
+    async function postJson(path, payload, signal) {
       try {
         const response = await fetch(path, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(payload),
+          ...(signal === undefined ? {} : { signal }),
         });
         if (!response.ok) return null;
         return await response.json();
       } catch {
         return null;
       }
-    }
-
-    /** Claim the queued decision for one session; the Host may not have stored it yet. */
-    async function fetchDecision(sessionId) {
-      const attempts = RETRY_DELAYS_MS.length + 1;
-      for (let index = 0; index < attempts; index += 1) {
-        const payload = await postJson(LATEST_ROUTE, { sessionId });
-        if (payload?.ok === true && payload.value) return payload.value;
-        if (index < attempts - 1) await sleep(RETRY_DELAYS_MS[index]);
-      }
-      return null;
     }
 
     function acknowledge(sessionId, shown) {
@@ -64,9 +55,21 @@ window.__ModuleLoader__.load({
       void postJson(EVENT_ROUTE, { sessionId, event, detail });
     }
 
-    async function notifyFinishedSession(ctx, sessionId) {
-      const decision = await fetchDecision(sessionId);
-      if (!decision) return;
+    function closeActiveNotifications() {
+      for (const notification of activeNotifications) {
+        try {
+          notification.close();
+        } catch {
+          // Already closed.
+        }
+      }
+      activeNotifications.clear();
+    }
+
+    /** Show one Host-rendered decision as a clickable notification. */
+    async function showDecision(ctx, decision) {
+      const sessionId = decision?.sessionId;
+      if (typeof sessionId !== 'string' || sessionId === '') return;
 
       if (typeof Notification !== 'function') {
         acknowledge(sessionId, false);
@@ -139,52 +142,37 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['sessions', 'uiWorkspace'],
+      inject: ['uiWorkspace'],
       apply(ctx) {
-        const sessions = ctx.sessions;
-        /** @type {Map<string, { running?: boolean, origin?: string, parentSessionId?: string }> | null} */
-        let previous = null;
+        const controller = new AbortController();
         let disposed = false;
 
-        const update = () => {
-          if (disposed) return;
-          let snapshot;
-          try {
-            snapshot = sessions.list.getSnapshot();
-          } catch {
-            return;
-          }
-          const next = new Map();
-          for (const id of snapshot?.ids ?? []) {
-            const summary = snapshot?.byId?.[id];
-            if (summary) next.set(String(id), summary);
-          }
-
-          // Notify only on a real running → idle transition observed while this
-          // client was attached; the initial load is a silent baseline.
-          if (previous !== null) {
-            for (const [id, summary] of next) {
-              const before = previous.get(id);
-              if (!before || before.running !== true || summary.running !== false) continue;
-              if (summary.origin === 'subagent' || summary.parentSessionId) continue;
-              void notifyFinishedSession(ctx, id);
+        const pump = async () => {
+          while (!disposed) {
+            const payload = await postJson(WAIT_ROUTE, {}, controller.signal);
+            if (disposed) return;
+            if (payload?.ok === true && Array.isArray(payload.value)) {
+              for (const decision of payload.value) await showDecision(ctx, decision);
+              continue;
             }
+            // Transport problem or an aborted request: back off, then reconnect.
+            if (!payload) await sleep(RETRY_DELAY_MS);
           }
-          previous = next;
         };
 
         ctx.effect(() => {
-          const unsubscribe = sessions.list.subscribe(update);
+          void pump();
           return () => {
             disposed = true;
-            unsubscribe();
+            controller.abort();
+            closeActiveNotifications();
           };
         });
+
         void postJson(READY_ROUTE, {
           href: location.href,
           permission: typeof Notification === 'function' ? Notification.permission : 'unsupported',
         });
-        update();
       },
     };
   },
